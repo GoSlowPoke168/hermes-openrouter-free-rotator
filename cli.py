@@ -36,6 +36,18 @@ def _privacy_lookup(state: dict[str, Any], log):
     return lookup
 
 
+def _availability_lookup(log):
+    """Fresh uptime check per model (never cached — availability is volatile)."""
+
+    def lookup(model_id: str) -> openrouter.Availability:
+        avail = openrouter.fetch_availability(model_id)
+        if not avail.ok:
+            log.info("availability: %s — %s", model_id, avail.reason)
+        return avail
+
+    return lookup
+
+
 def _run_selection(state: dict[str, Any], log) -> tuple[selection.SelectionResult, dict[str, dict]]:
     api_models = openrouter.fetch_free_models()
     collection_order = openrouter.fetch_collection_order()
@@ -45,6 +57,7 @@ def _run_selection(state: dict[str, Any], log) -> tuple[selection.SelectionResul
         api_models,
         collection_order,
         _privacy_lookup(state, log),
+        _availability_lookup(log),
         today=_today(),
     )
     state_mod.prune_privacy_cache(state, {c.base_slug for c in result.candidates})
@@ -103,6 +116,7 @@ def cmd_sync(args) -> None:
             {
                 "id": c.id, "rank": c.rank, "tier": c.tier,
                 "endpoint_provider": c.endpoint_provider,
+                "uptime_1d": c.uptime_1d,
                 "expires": c.expiration_date,
             }
             for c in result.selected
@@ -194,9 +208,12 @@ def cmd_status(args) -> None:
         print("managed selection:")
         for i, s in enumerate(selected):
             role = "default " if i == 0 else "fallback"
+            up = s.get("uptime_1d")
+            up_str = f"{up:.0f}%" if isinstance(up, (int, float)) else "n/a"
             print(
                 f"  {role} {s.get('id')}  tier={s.get('tier')}"
                 f"  via={s.get('endpoint_provider') or '?'}"
+                f"  uptime={up_str}"
                 f"  expires={s.get('expires') or 'none listed'}"
             )
     else:
@@ -217,6 +234,7 @@ def cmd_list(args) -> None:
         {
             "rank": c.rank, "id": c.id, "tier": c.tier,
             "tools": c.supports_tools, "expires": c.expiration_date,
+            "uptime_1d": c.uptime_1d,
             "endpoint_provider": c.endpoint_provider, "reason": c.reason,
         }
         for c in sorted(result.candidates, key=lambda c: (c.rank is None, c.rank or 0))
@@ -230,7 +248,8 @@ def cmd_list(args) -> None:
         rank = f"#{r['rank']}" if r["rank"] else "--"
         tier = r["tier"] or "?"
         expires = r["expires"] or "-"
-        print(f"{rank:>4}  {r['id']:<55} tier={tier:<8} expires={expires:<12} {r['reason']}")
+        up = f"{r['uptime_1d']:.0f}%" if r["uptime_1d"] is not None else "-"
+        print(f"{rank:>4}  {r['id']:<55} tier={tier:<8} uptime={up:<5} expires={expires:<12} {r['reason']}")
 
 
 def cmd_install_cron(args) -> None:

@@ -13,7 +13,7 @@ import datetime as _dt
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .openrouter import TIER_LOGS, TIER_PRIVATE, Privacy
+from .openrouter import TIER_LOGS, TIER_PRIVATE, Availability, Privacy
 
 EXPIRY_BUFFER_DAYS = 2
 DEFAULT_WANT = 3
@@ -32,6 +32,7 @@ class Candidate:
     rank: int | None = None      # 1-based, after ranking
     tier: str | None = None      # privacy tier once classified
     endpoint_provider: str | None = None
+    uptime_1d: float | None = None   # best free-endpoint uptime %, once checked
     reason: str = ""             # human-readable selection/skip reason
 
     @classmethod
@@ -106,6 +107,7 @@ def select_models(
     api_models: list[dict[str, Any]],
     collection_order: list[str] | None,
     privacy_of: Callable[[str], Privacy],
+    availability_of: Callable[[str], Availability],
     *,
     today: _dt.date,
     want: int = DEFAULT_WANT,
@@ -135,12 +137,23 @@ def select_models(
             c.reason = c.reason or "not needed: enough higher-ranked private models"
             continue
         if lookups >= max_privacy_lookups:
-            c.reason = "skipped: privacy lookup budget exhausted"
+            c.reason = "skipped: lookup budget exhausted"
             continue
         lookups += 1
+
+        # Availability first — a cheap JSON call that skips down endpoints
+        # before we spend a page scrape on privacy.
+        availability = availability_of(c.id)
+        c.uptime_1d = availability.best_uptime_1d
+        if not availability.ok:
+            c.tier = None
+            c.endpoint_provider = availability.endpoint_provider
+            c.reason = f"skipped: {availability.reason}"
+            continue
+
         privacy = privacy_of(c.base_slug)
         c.tier = privacy.tier
-        c.endpoint_provider = privacy.endpoint_provider
+        c.endpoint_provider = privacy.endpoint_provider or availability.endpoint_provider
         if privacy.tier == TIER_PRIVATE:
             private_pool.append(c)
         elif privacy.tier == TIER_LOGS:
