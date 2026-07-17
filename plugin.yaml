@@ -1,0 +1,5 @@
+name: hermes-openrouter-free-rotator
+version: 1.0.0
+description: "Keeps model.default and fallback_providers pointed at the best privacy-respecting free OpenRouter models — free (:free) variants expire, this plugin rotates to the top available ones automatically."
+author: Jeremy Hou
+kind: standalone
