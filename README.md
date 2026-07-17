@@ -105,3 +105,7 @@ HERMES_FREEMODELS_TODAY=2099-01-01 hermes freemodels sync --dry-run  # simulate 
 ```
 
 Your `config.yaml` is left as-is on uninstall.
+
+## License
+
+[MIT](LICENSE)
