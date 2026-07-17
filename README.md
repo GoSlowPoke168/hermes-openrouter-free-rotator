@@ -35,14 +35,14 @@ collection page can't be read, ranking falls back to newest-first.
 
 ```bash
 # Portable — clone anywhere, then install into ~/.hermes/plugins/
-git clone https://github.com/jeremyhou/hermes-openrouter-free-rotator
+git clone https://github.com/GoSlowPoke168/hermes-openrouter-free-rotator
 cd hermes-openrouter-free-rotator && ./install.sh
 
 # Dev mode — symlink your checkout instead of copying
 ./install.sh --symlink
 
 # Via the Hermes plugin manager
-hermes plugins install <owner>/hermes-openrouter-free-rotator
+hermes plugins install GoSlowPoke168/hermes-openrouter-free-rotator
 bash ~/.hermes/plugins/hermes-openrouter-free-rotator/install.sh
 ```
 
@@ -56,7 +56,7 @@ hermes freemodels list                  # ranked candidates: tier, uptime, expir
 hermes freemodels sync                  # apply the best selection (idempotent)
 hermes freemodels sync --dry-run        # preview the change without writing
 hermes freemodels status                # current selection, last sync, last error
-hermes freemodels install-cron --apply  # run daily (default 06:17; --time HH:MM)
+hermes freemodels install-cron --apply  # run daily (default 00:30; --time HH:MM)
 ```
 
 `sync` exits `0` on success or no-change and `1` on failure (logged to
