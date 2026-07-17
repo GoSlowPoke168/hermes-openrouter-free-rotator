@@ -28,6 +28,10 @@ A free model qualifies only if:
    agent; a model that can't call tools is useless as a default).
 3. **Not expiring** — models expiring within 2 days are skipped, so the
    switch happens *before* the old default dies.
+4. **Actually up** — a model whose best free endpoint has less than ~20%
+   uptime over the last day is skipped as effectively offline. Day-long
+   uptime is deliberately lenient (a brief outage won't drop a model), and
+   since the check re-runs daily, a model that recovers is picked back up.
 
 Within a tier, models are ranked by the collection page's usage order
 (best/most-used first). If the page can't be scraped, ranking falls back to
@@ -77,8 +81,14 @@ OpenRouter's public API doesn't expose provider data policies, so the plugin
 reads each candidate model's page and extracts the free endpoint's
 `data_policy` (`training`, `retainsPrompts`). If a model is served free by
 multiple providers, the *worst* policy wins (routing may hit any of them).
-Results are cached for 24h in `~/.hermes/freemodels/state.json`, so the daily
-run is usually a single API call plus at most a few page fetches.
+Privacy results are cached for 24h in `~/.hermes/freemodels/state.json`, so
+the daily run is usually a single API call plus at most a few page fetches.
+
+Uptime comes from the public per-model endpoints API for the `:free` slug
+(`/api/v1/models/<id>/endpoints`), which reports each free endpoint's
+`uptime_last_1d`. It's checked fresh every run (never cached — availability
+is volatile) and gates the privacy scrape, so down models are dropped cheaply
+before any page fetch.
 
 ## Files
 

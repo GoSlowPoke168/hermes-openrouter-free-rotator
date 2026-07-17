@@ -20,9 +20,12 @@ def _group_payload(*endpoints: dict) -> str:
 
 
 def _ep(training=False, retains=False, provider="TestProv", eid="e1"):
+    # Real free endpoints carry is_free:true alongside their data_policy.
     return {
         "id": eid,
         "provider_display_name": provider,
+        "is_free": True,
+        "variant": "free",
         "data_policy": {"training": training, "retainsPrompts": retains},
     }
 
@@ -32,6 +35,15 @@ def test_real_page_snippet_is_private():
     privacy = parse_privacy(snippet)
     assert privacy.tier == TIER_PRIVATE
     assert privacy.endpoint_provider == "NovitaAI"
+
+
+def test_flat_endpoint_page_shape_is_private():
+    # qwen-style page: endpoint objects carry data_policy directly (not nested
+    # under a variant group). Regression for the enclosing-object matcher.
+    fixture = (FIXTURES / "qwen_free_endpoint.json.txt").read_text()
+    privacy = parse_privacy(fixture)
+    assert privacy.tier == TIER_PRIVATE
+    assert privacy.endpoint_provider == "Venice (Beta)"
 
 
 def test_private_endpoint():
