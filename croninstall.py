@@ -20,7 +20,7 @@ def hermes_bin() -> str:
     return str(fallback) if fallback.exists() else "hermes"
 
 
-def build_cron_line(time_str: str = "06:17") -> str:
+def build_cron_line(time_str: str = "00:30") -> str:
     m = re.fullmatch(r"(\d{1,2}):(\d{2})", time_str)
     if not m:
         raise ValueError(f"--time must be HH:MM, got {time_str!r}")

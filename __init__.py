@@ -40,7 +40,7 @@ def _setup_parser(parser) -> None:
         "install-cron", help="Print (or install with --apply) the daily crontab entry"
     )
     p_cron.add_argument(
-        "--time", default="06:17", metavar="HH:MM", help="Daily run time (default 06:17)"
+        "--time", default="00:30", metavar="HH:MM", help="Daily run time (default 00:30)"
     )
     p_cron.add_argument(
         "--apply", action="store_true", help="Add the entry to your crontab (idempotent)"
