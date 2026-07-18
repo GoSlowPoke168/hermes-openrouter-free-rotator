@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from .openrouter import TIER_LOGS, TIER_PRIVATE, Availability, Privacy
 
-EXPIRY_BUFFER_DAYS = 2
+EXPIRY_BUFFER_DAYS = 1  # skip a model once it's within 1 day of expiring
 DEFAULT_WANT = 3
 MAX_PRIVACY_LOOKUPS = 12
 
