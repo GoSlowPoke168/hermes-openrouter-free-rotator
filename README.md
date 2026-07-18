@@ -16,6 +16,49 @@ drops anything unsuitable, and rewrites your Hermes config:
 Writes happen only when the selection actually changes, so a model expiring
 tomorrow is replaced *before* it goes dark.
 
+**Prerequisite:** `model.provider` in `config.yaml` must already be
+`openrouter`. If it's anything else, `sync` aborts without touching your
+config — the plugin only ever manages a setup you've already pointed at
+OpenRouter, it won't switch providers for you. `fallback_providers` doesn't
+need to exist beforehand; if it's missing, the plugin creates it.
+
+### Example
+
+Before (freshly on OpenRouter, `fallback_providers` not yet set, one
+hand-added non-OpenRouter fallback already present):
+
+```yaml
+model:
+  provider: openrouter
+  default: some-model-that-just-expired:free
+  base_url: https://openrouter.ai/api/v1
+  api_mode: chat_completions
+fallback_providers:
+  - provider: google
+    model: gemini-3.1-flash-lite
+```
+
+After `hermes freemodels sync`:
+
+```yaml
+model:
+  provider: openrouter
+  default: tencent/hy3:free
+  base_url: https://openrouter.ai/api/v1
+  api_mode: chat_completions
+fallback_providers:
+  - provider: openrouter
+    model: cohere/north-mini-code:free
+  - provider: openrouter
+    model: openai/gpt-oss-20b:free
+  - provider: google
+    model: gemini-3.1-flash-lite
+```
+
+`model.default` and the leading `openrouter` entries in `fallback_providers`
+are plugin-managed and get rewritten on every sync; the `google` entry was
+added by hand, isn't tracked as managed, and is preserved in place after them.
+
 ## Selection criteria
 
 A free model is eligible only if it is:
@@ -24,7 +67,7 @@ A free model is eligible only if it is:
 |-----------|------|
 | **Private** | Its free endpoint's provider does not train on or retain prompts. Falls back to the **Logs** tier (retains but doesn't train) only if fewer than 3 private models exist. Providers that **train on prompts are never selected.** |
 | **Tool-capable** | The free endpoint supports `tools` — Hermes is an agent, so a model that can't call tools can't be the default. |
-| **Not expiring** | Models expiring within 2 days are skipped. |
+| **Not expiring** | Models expiring within 1 day are skipped. |
 | **Available** | The free endpoint's day-long uptime is above ~20%. Lenient by design (a brief outage won't drop a model) and re-checked daily, so a recovered model returns automatically. |
 
 Eligible models are ranked by the collection's real-usage order, with privacy
