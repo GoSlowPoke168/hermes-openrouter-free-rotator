@@ -26,7 +26,7 @@ from typing import Any
 MODELS_API_URL = "https://openrouter.ai/api/v1/models"
 COLLECTION_URL = "https://openrouter.ai/collections/free-models"
 MODEL_PAGE_URL = "https://openrouter.ai/{slug}"
-USER_AGENT = "hermes-openrouter-free-rotator/1.0 (+https://github.com/jeremyhou)"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0"
 
 TIER_PRIVATE = "private"  # no training, no prompt retention
 TIER_LOGS = "logs"        # no training, retains prompts
