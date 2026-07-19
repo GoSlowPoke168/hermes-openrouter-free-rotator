@@ -99,7 +99,7 @@ hermes freemodels list                  # ranked candidates: tier, uptime, expir
 hermes freemodels sync                  # apply the best selection (idempotent)
 hermes freemodels sync --dry-run        # preview the change without writing
 hermes freemodels status                # current selection, last sync, last error
-hermes freemodels install-cron --apply  # run daily (default 00:30; --time HH:MM)
+hermes freemodels install-cron --apply  # run daily (default 00:01 UTC; --time HH:MM)
 ```
 
 `sync` exits `0` on success or no-change and `1` on failure (logged to
