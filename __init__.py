@@ -40,7 +40,11 @@ def _setup_parser(parser) -> None:
         "install-cron", help="Print (or install with --apply) the daily crontab entry"
     )
     p_cron.add_argument(
-        "--time", default="00:30", metavar="HH:MM", help="Daily run time (default 00:30)"
+        "--time",
+        default="00:01",
+        metavar="HH:MM",
+        help="Daily run time in UTC (default 00:01 — shortly after OpenRouter's "
+        "free-tier quota resets at 00:00 UTC); converted to local time when installed",
     )
     p_cron.add_argument(
         "--apply", action="store_true", help="Add the entry to your crontab (idempotent)"
