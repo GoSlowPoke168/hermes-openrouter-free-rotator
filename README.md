@@ -106,6 +106,12 @@ hermes freemodels install-cron --apply  # run daily (default 00:01 UTC; --time H
 `~/.hermes/freemodels/cron.log`). On any failure it leaves your config
 untouched; Hermes's own runtime fallback chain is the safety net.
 
+**No systemd service here** — this plugin runs as a daily cron job (see
+`install-cron` above), not a background service. There's nothing to
+`systemctl restart`; to re-run manually or pick up code changes just run
+`hermes freemodels sync`. Check `crontab -l` to see the installed line and
+`~/.hermes/freemodels/cron.log` for its output.
+
 ## How it works
 
 - **Ranking & expiry** come from the public models API (`/api/v1/models`) and
