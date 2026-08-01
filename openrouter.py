@@ -196,9 +196,14 @@ def parse_collection_order(payload: str) -> list[str] | None:
 # ---------------------------------------------------------------------------
 
 def fetch_privacy(base_slug: str, timeout: int = 20) -> Privacy:
-    """Classify the free endpoint(s) of *base_slug* by provider data policy."""
+    """Classify the free endpoint(s) of *base_slug* by provider data policy.
+
+    The request must keep the ":free" variant suffix in the URL path — for
+    free-only models (no paid variant) OpenRouter 404s the bare slug, even
+    though the suffixed URL resolves identically for dual-variant models.
+    """
     try:
-        html = _http_get(MODEL_PAGE_URL.format(slug=base_slug), timeout=timeout)
+        html = _http_get(MODEL_PAGE_URL.format(slug=f"{base_slug}:free"), timeout=timeout)
         return parse_privacy(decode_rsc_payload(html))
     except Exception:
         return Privacy(tier=TIER_UNKNOWN)
