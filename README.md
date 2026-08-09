@@ -139,13 +139,6 @@ Everything lives under `~/.hermes/freemodels/`:
 
 Config is written through Hermes's own atomic writer, preserving file mode.
 
-## Testing
-
-```bash
-python -m pytest tests/                                              # unit tests
-HERMES_FREEMODELS_TODAY=2099-01-01 hermes freemodels sync --dry-run  # simulate an expiry day
-```
-
 ## Uninstall
 
 ```bash
@@ -154,6 +147,11 @@ HERMES_FREEMODELS_TODAY=2099-01-01 hermes freemodels sync --dry-run  # simulate 
 ```
 
 Your `config.yaml` is left as-is on uninstall.
+
+## TODO
+- [ ] Add a feature where you can manually choose a model you want to override the free model it chose and the fallback sequence. This should be set until the user either unsets it or the model expires.
+- [ ] Add the feature where it automatically loads all models into Hermes' `/models` list so you can choose which one you want.
+- [ ] Add a feature where it overrides the privacy-first models to allow the user to choose an option that makes the freemodel rotator select models that allow logging, or allow training as well.
 
 ## License
 
