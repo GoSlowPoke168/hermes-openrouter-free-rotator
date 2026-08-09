@@ -73,6 +73,17 @@ def test_status_shows_default_and_fallback_roles():
     assert row_from_snapshot(_snap(outcome="selected", role_index=2)).status == "← Fallback #2"
 
 
+def test_pinned_status_outranks_every_other_label():
+    # The pin is the one thing here the user chose, and it explains why the
+    # row isn't rotating — so it wins over role and tier alike.
+    assert row_from_snapshot(_snap(pinned=True, outcome="selected", role_index=0)).status == (
+        "← Pinned"
+    )
+    assert row_from_snapshot(_snap(pinned=True, tier="trains")).status == "← Pinned"
+    # Absent or false is the normal case and must not change anything.
+    assert row_from_snapshot(_snap(pinned=False, tier="logs")).status == "Retains prompts"
+
+
 def test_status_shows_tier_labels():
     assert row_from_snapshot(_snap(tier="private")).status == ""
     assert row_from_snapshot(_snap(tier="logs")).status == "Retains prompts"

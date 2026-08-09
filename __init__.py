@@ -46,6 +46,24 @@ def _setup_parser(parser) -> None:
         help="Remove this plugin's free models from Hermes's /model picker",
     )
 
+    p_pin = sub.add_parser(
+        "pin",
+        help="Switch to a model and stop sync from rotating model.default away from it",
+    )
+    p_pin.add_argument(
+        "model_id",
+        nargs="?",
+        metavar="MODEL_ID",
+        help="Model to pin (default: whatever model.default is set to now)",
+    )
+    p_pin.add_argument(
+        "--force",
+        action="store_true",
+        help="Pin an id that isn't in the /model catalog",
+    )
+
+    sub.add_parser("unpin", help="Resume automatic rotation of model.default")
+
     p_cron = sub.add_parser(
         "install-cron", help="Print (or install with --apply) the daily crontab entry"
     )
@@ -66,9 +84,11 @@ def _dispatch(args) -> None:
     from .cli import (
         cmd_install_cron,
         cmd_list,
+        cmd_pin,
         cmd_remove_catalog,
         cmd_status,
         cmd_sync,
+        cmd_unpin,
     )
 
     handlers = {
@@ -76,6 +96,8 @@ def _dispatch(args) -> None:
         "status": cmd_status,
         "list": cmd_list,
         "remove-catalog": cmd_remove_catalog,
+        "pin": cmd_pin,
+        "unpin": cmd_unpin,
         "install-cron": cmd_install_cron,
     }
     handlers[args.fm_cmd](args)
@@ -108,7 +130,7 @@ def register(ctx) -> None:
             name="freemodels",
             handler=_slash_freemodels,
             description="Ranked free OpenRouter models this plugin manages",
-            args_hint="[full|json]",
+            args_hint="[full|json|pin <model-id>|unpin]",
         )
     except Exception:
         # Older host without register_command — the CLI command still works,

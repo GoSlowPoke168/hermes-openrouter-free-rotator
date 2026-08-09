@@ -2,7 +2,8 @@
 
 state.json is the plugin's ownership ledger — `managed_default` and
 `managed_fallbacks` record exactly which config entries the plugin wrote,
-so sync never touches entries the user added by hand. It also caches
+so sync never touches entries the user added by hand. `pinned` is the
+manual override: while set, sync leaves model.default alone. It also caches
 privacy lookups (model-page scrapes) for 24h so the daily cron run is
 usually a single API call.
 """
@@ -59,6 +60,13 @@ def default_state() -> dict[str, Any]:
         # any the user added by hand alone.
         "managed_catalog": [],
         "managed_catalog_written": None,
+        # Manual override: while `pinned` is set, sync leaves model.default
+        # alone and only rotates the fallback chain. Flat keys, not a nested
+        # dict — load_state's merge is shallow, so nested sub-keys added later
+        # would never back-fill onto an existing state.json.
+        "pinned": None,
+        "pinned_at": None,
+        "pin_cleared_note": None,
         # Presentation snapshot for `/freemodels`, which must not hit the
         # network from an interactive session.
         "catalog": {"generated": None, "ranking": None, "warning": None, "rows": []},

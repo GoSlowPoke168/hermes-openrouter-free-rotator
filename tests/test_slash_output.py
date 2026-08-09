@@ -113,6 +113,63 @@ def test_empty_state_points_at_sync(state):
     assert "No data yet" in out and "hermes freemodels sync" in out
 
 
+# ---- pin ------------------------------------------------------------------
+
+def test_pinned_row_is_labelled_and_banner_shown(state):
+    data = state(chat=False)
+    data["pinned"] = "vendor/model-1:free"
+    out = cli.slash_freemodels("")
+    assert "← Pinned" in out
+    assert "📌 Pinned to `vendor/model-1:free`" in out
+    assert "/freemodels unpin" in out
+
+
+def test_pin_marking_does_not_mutate_the_stored_snapshot(state):
+    # slash renders from state.json; stamping the row must not write back.
+    data = state(chat=False)
+    data["pinned"] = "vendor/model-1:free"
+    cli.slash_freemodels("")
+    assert "pinned" not in data["catalog"]["rows"][0]
+
+
+def test_pin_cleared_note_is_surfaced(state):
+    data = state(chat=False)
+    data["pin_cleared_note"] = "gone:free is no longer offered — rotation resumed"
+    assert "rotation resumed" in cli.slash_freemodels("")
+
+
+def test_pin_verb_preserves_model_id_case(state, monkeypatch):
+    seen = {}
+
+    def fake_pin(model_id, force):
+        seen["id"], seen["force"] = model_id, force
+        return True, "ok"
+
+    state(chat=False)
+    monkeypatch.setattr(cli, "_do_pin", fake_pin)
+    # The verb is matched case-insensitively; the id must survive verbatim.
+    assert cli.slash_freemodels("PIN Vendor/Model-1:Free") == "ok"
+    assert seen == {"id": "Vendor/Model-1:Free", "force": False}
+
+
+def test_bare_pin_passes_no_id(state, monkeypatch):
+    state(chat=False)
+    monkeypatch.setattr(cli, "_do_pin", lambda model_id, force: (True, f"id={model_id!r}"))
+    assert cli.slash_freemodels("pin") == "id=None"
+
+
+def test_unpin_verb_dispatches(state, monkeypatch):
+    state(chat=False)
+    monkeypatch.setattr(cli, "_do_unpin", lambda: (True, "unpinned"))
+    assert cli.slash_freemodels("  UNPIN  ") == "unpinned"
+
+
+def test_pin_failure_returns_the_message_rather_than_raising(state, monkeypatch):
+    state(chat=False)
+    monkeypatch.setattr(cli, "_do_pin", lambda model_id, force: (False, "not in the catalog"))
+    assert cli.slash_freemodels("pin ghost:free") == "not in the catalog"
+
+
 def test_json_arg_returns_the_raw_snapshot(state):
     import json
 

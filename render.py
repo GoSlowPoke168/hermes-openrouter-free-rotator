@@ -86,6 +86,11 @@ TIER_LABELS = {
 
 def _status_for(d: dict[str, Any]) -> str:
     """Derive STATUS from structured fields only — never by parsing `reason`."""
+    # A pin outranks every other label: it's the one thing here the user chose
+    # themselves, and it explains why this row isn't rotating.
+    if d.get("pinned"):
+        return "← Pinned"
+
     outcome = d.get("outcome") or ""
 
     if outcome == "selected":

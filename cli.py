@@ -99,13 +99,29 @@ def _snapshot_row(c: selection.Candidate) -> dict[str, Any]:
     }
 
 
-def _ordered_snapshots(result: selection.SelectionResult) -> list[dict[str, Any]]:
+def _mark_pinned(rows: list[dict[str, Any]], pinned: str | None) -> list[dict[str, Any]]:
+    """Stamp the pinned row so the renderer can label it.
+
+    Kept out of `_snapshot_row` because a pin is a property of the user's
+    config, not of the candidate — and out of `render`, which reads structured
+    fields and never state.
+    """
+    if pinned:
+        for row in rows:
+            if row.get("id") == pinned:
+                row["pinned"] = True
+    return rows
+
+
+def _ordered_snapshots(
+    result: selection.SelectionResult, pinned: str | None = None
+) -> list[dict[str, Any]]:
     """Catalog order (best→worst) first, then everything excluded from it."""
     rows = [_snapshot_row(c) for c in result.catalog]
     rest = [c for c in result.candidates if not c.in_catalog]
     rest.sort(key=lambda c: (c.rank is None, c.rank or 0))
     rows.extend(_snapshot_row(c) for c in rest)
-    return rows
+    return _mark_pinned(rows, pinned)
 
 
 def _catalog_will_be_honored() -> tuple[bool, str]:
@@ -239,14 +255,32 @@ def _apply_catalog_only(
         print(f"/model catalog:  {_catalog_str(catalog_plan)}")
 
 
+def _settle_pin(state: dict[str, Any], plan: configsync.SyncPlan, log) -> None:
+    """Drop a pin the plan found unusable, leaving a note explaining why.
+
+    The note survives in state.json until the next successful `pin`, so the
+    user finds out why rotation resumed even if they weren't watching the run
+    that dropped it.
+    """
+    if not plan.pin_cleared:
+        return
+    log.info("pin: cleared — %s", plan.pin_cleared)
+    state.update(
+        pinned=None,
+        pinned_at=None,
+        pin_cleared_note=f"{state_mod.now_iso()} {plan.pin_cleared} — rotation resumed",
+    )
+
+
 def cmd_sync(args) -> None:
     log = state_mod.get_logger()
-    state = state_mod.load_state()
     with state_mod.sync_lock() as acquired:
         if not acquired:
             print("another sync is already running — skipping this run")
             return
-        _sync(args, state, log)
+        # Load inside the lock: `pin` writes state too, and reading first would
+        # let this run's save_state clobber a pin set while we were fetching.
+        _sync(args, state_mod.load_state(), log)
 
 
 def _sync(args, state: dict[str, Any], log) -> None:
@@ -281,6 +315,7 @@ def _sync(args, state: dict[str, Any], log) -> None:
     plan = configsync.build_plan(
         cfg, result.selected, state,
         force=args.force, today=_today(), free_models_by_id=by_id,
+        pinned=state.get("pinned"),
     )
     if plan.abort_reason:
         # Same reasoning: the catalog changes no routing, so a user who moved
@@ -308,12 +343,15 @@ def _sync(args, state: dict[str, Any], log) -> None:
             for c in result.selected
         ],
         "catalog": _catalog_summary(catalog_plan, catalog_warning if not honored else ""),
+        "pinned": plan.pinned,
+        "pin_cleared": plan.pin_cleared,
         "reasons": plan.reasons,
     }
 
     if not (plan.changed or catalog_changed):
         state["last_sync"] = state_mod.now_iso()
         state["last_error"] = None
+        _settle_pin(state, plan, log)
         state_mod.save_state(state)
         log.info("sync: no change (default=%s)", plan.current_default)
         if args.json:
@@ -356,6 +394,7 @@ def _sync(args, state: dict[str, Any], log) -> None:
     if catalog_changed:
         _record_catalog(state, catalog_plan)
     state.update(last_sync=state_mod.now_iso(), last_error=None)
+    _settle_pin(state, plan, log)
     state_mod.save_state(state)
 
     log.info(
@@ -395,6 +434,8 @@ def cmd_status(args) -> None:
         "selected": state.get("selected"),
         "managed_catalog": managed_catalog,
         "managed_catalog_written": state.get("managed_catalog_written"),
+        "pinned": state.get("pinned"),
+        "pinned_at": state.get("pinned_at"),
         "last_sync": state.get("last_sync"),
         "last_change": state.get("last_change"),
         "last_error": state.get("last_error"),
@@ -403,6 +444,13 @@ def cmd_status(args) -> None:
         print(json.dumps(info, indent=2))
         return
     print(f"current default:  {current_default}")
+    if state.get("pinned"):
+        since = state.get("pinned_at") or "unknown"
+        print(f"pinned:           {state['pinned']} since {since} — rotation paused")
+    else:
+        print("pinned:           none — rotating automatically")
+    if state.get("pin_cleared_note"):
+        print(f"pin cleared:      {state['pin_cleared_note']}")
     print(f"last sync:        {state.get('last_sync') or 'never'}")
     print(f"last change:      {state.get('last_change') or 'never'}")
     if managed_catalog:
@@ -430,6 +478,115 @@ def cmd_status(args) -> None:
             )
     else:
         print("managed selection: none yet — run `hermes freemodels sync`")
+
+
+# ---------------------------------------------------------------------------
+# Pin: a manual override of the rotated default
+# ---------------------------------------------------------------------------
+
+def _pin_tier(state: dict[str, Any], model_id: str) -> str | None:
+    """Privacy tier for `model_id` per the last catalog snapshot, if known."""
+    for row in (state.get("catalog") or {}).get("rows") or []:
+        if row.get("id") == model_id:
+            return row.get("tier")
+    return None
+
+
+def _do_pin(model_id: str | None, force: bool) -> tuple[bool, str]:
+    """Pin a model and switch to it. Returns (ok, message). No network.
+
+    Shared by the CLI command and the slash command so the two can't drift.
+    Pinning switches as well as freezing: a pin that only took effect at the
+    next sync would be a setting, not an action.
+    """
+    log = state_mod.get_logger()
+    with state_mod.sync_lock() as acquired:
+        if not acquired:
+            return False, "a sync is running right now — try again in a moment."
+        state = state_mod.load_state()
+        try:
+            from hermes_cli.config import load_config
+
+            cfg = load_config()
+        except Exception as exc:
+            return False, f"could not read config.yaml: {exc}"
+
+        model_cfg = cfg.get("model") or {}
+        if model_cfg.get("provider") != "openrouter":
+            return False, (
+                f"model.provider is '{model_cfg.get('provider')}', not 'openrouter' — "
+                "refusing to manage a setup this plugin doesn't own."
+            )
+
+        target = model_id or model_cfg.get("default")
+        if not target:
+            return False, "no model given and model.default is empty — pass a model id."
+
+        notes: list[str] = []
+        known = configsync.read_manifest_ids()
+        if not known:
+            notes.append("Couldn't verify the id — no /model catalog has been written yet.")
+        elif target not in known and not force:
+            return False, (
+                f"{target} isn't in the /model catalog. Run `/freemodels` to see the "
+                "ids you can pin, or `hermes freemodels pin --force <id>` to override."
+            )
+
+        tier = _pin_tier(state, target)
+        if tier == "trains":
+            notes.append("Warning: this model trains on your prompts.")
+        elif tier == "logs":
+            notes.append("Note: this model retains prompts.")
+
+        try:
+            configsync.apply_pin(cfg, target)
+        except Exception as exc:
+            return False, f"could not write config.yaml: {exc}"
+
+        state.update(pinned=target, pinned_at=state_mod.now_iso(), pin_cleared_note=None)
+        state_mod.save_state(state)
+        log.info("pin: %s — rotation of model.default paused", target)
+
+    lines = [f"Pinned {target} — sync will no longer change model.default."]
+    lines.extend(notes)
+    lines.append("Fallbacks keep rotating. Run `unpin` to resume automatic selection.")
+    return True, "\n".join(lines)
+
+
+def _do_unpin() -> tuple[bool, str]:
+    """Clear the pin. Returns (ok, message). No network, no config write."""
+    log = state_mod.get_logger()
+    with state_mod.sync_lock() as acquired:
+        if not acquired:
+            return False, "a sync is running right now — try again in a moment."
+        state = state_mod.load_state()
+        previous = state.get("pinned")
+        if not previous:
+            return True, "No model is pinned — sync is already rotating automatically."
+        state.update(pinned=None, pinned_at=None, pin_cleared_note=None)
+        state_mod.save_state(state)
+        log.info("unpin: %s — rotation resumed", previous)
+    return True, (
+        f"Unpinned {previous}. model.default stays as it is for now; the next sync "
+        "will start rotating it again."
+    )
+
+
+def _emit(ok: bool, message: str) -> None:
+    """Print a (ok, message) pair the way every other command reports."""
+    if ok:
+        print(message)
+        return
+    print(f"error: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def cmd_pin(args) -> None:
+    _emit(*_do_pin(args.model_id, args.force))
+
+
+def cmd_unpin(args) -> None:
+    _emit(*_do_unpin())
 
 
 def cmd_list(args) -> None:
@@ -461,7 +618,7 @@ def cmd_list(args) -> None:
 
     if result.used_fallback_ranking:
         print("note: collection page unavailable — ranked by creation date\n")
-    print(render.render_snapshots(_ordered_snapshots(result)))
+    print(render.render_snapshots(_ordered_snapshots(result, state.get("pinned"))))
     if not honored:
         print(f"\nwarning: {warning}", file=sys.stderr)
 
@@ -568,33 +725,52 @@ def _fit_rows(rows: list[dict[str, Any]], header: str) -> tuple[list[dict[str, A
 def slash_freemodels(raw_args: str) -> str:
     """`/freemodels` — the labelled table `/model` structurally can't show.
 
-    Reads the state.json snapshot only: this runs inside an interactive turn,
-    where a network round-trip would stall the session and a config write
-    would be an invisible side effect of sending a chat message. The
-    staleness banner names the command to run instead.
+    Never hits the network — a round-trip would stall the interactive turn, so
+    the view is served from the state.json snapshot and the staleness banner
+    names the command to refresh it. `pin`/`unpin` do write, but only when
+    typed explicitly; viewing is still free of side effects.
     """
-    arg = (raw_args or "").strip().lower()
+    parts = (raw_args or "").strip().split()
+    # Tokenised rather than compared whole, because a model id must keep its
+    # case while the verb is matched case-insensitively.
+    verb = parts[0].lower() if parts else ""
+    target = parts[1] if len(parts) > 1 else None
+
+    if verb == "pin":
+        return _do_pin(target, force=False)[1]
+    if verb == "unpin":
+        return _do_unpin()[1]
+
     state = state_mod.load_state()
     snapshot = state.get("catalog") or {}
     rows = snapshot.get("rows") or []
 
-    if arg == "json":
+    if verb == "json":
         return _fence(json.dumps(snapshot, indent=2))
 
     if not rows:
         return "**Free OpenRouter Models**\nNo data yet — run `hermes freemodels sync`."
 
-    if arg != "full":
+    if verb != "full":
         rows = [r for r in rows if r.get("in_catalog")]
 
+    pinned = state.get("pinned")
+    rows = _mark_pinned([dict(r) for r in rows], pinned)
+
     last_sync = state.get("last_sync")
-    scope = "All candidates" if arg == "full" else "Available in /model"
+    scope = "All candidates" if verb == "full" else "Available in /model"
     lines = [
         "**Free OpenRouter Models**",
         f"{scope}: {len(rows)} · Last synced {_age_str(last_sync)}",
     ]
 
     notes: list[str] = []
+    if pinned:
+        notes.append(
+            f"📌 Pinned to `{pinned}` — rotation paused. `/freemodels unpin` to resume."
+        )
+    if state.get("pin_cleared_note"):
+        notes.append(f"ℹ️ {state['pin_cleared_note']}")
     if _is_stale(last_sync):
         notes.append("⚠️ Data is stale — run `hermes freemodels sync` to refresh.")
     if state.get("last_error"):
@@ -609,18 +785,29 @@ def slash_freemodels(raw_args: str) -> str:
         lines.append("")
         lines.extend(notes)
 
-    shown, extra = _fit_rows(rows, "\n".join(lines))
+    hint = (
+        ""
+        if verb == "full"
+        else "Pin one with `/freemodels pin <model-id>` so sync stops changing it. "
+        "`/freemodels full` also lists models that were skipped."
+    )
+    # Budget the footer too, not just the header — it is part of the message
+    # Discord counts. The overflow line's presence depends on the trim we are
+    # about to compute, so reserve room for its longest form.
+    reserved = lines + [
+        "",
+        f"{len(rows)} more — run `hermes freemodels list` to see them all. {hint}",
+    ]
+    shown, extra = _fit_rows(rows, "\n".join(reserved))
+
     lines.append("")
     lines.append(_fence(render.render_snapshots(shown)))
 
     footer = []
     if extra:
         footer.append(f"{extra} more — run `hermes freemodels list` to see them all.")
-    if arg != "full":
-        footer.append(
-            "Select one with `/model` → OpenRouter. "
-            "`/freemodels full` also lists models that were skipped."
-        )
+    if hint:
+        footer.append(hint)
     if footer:
         lines.append("")
         lines.append(" ".join(footer))

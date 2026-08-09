@@ -6,6 +6,8 @@ Two independent writes, each with its own ownership ledger in state.json:
   `managed_fallbacks` (plus, on first run, it adopts any existing openrouter
   `:free` entries as managed). Everything else in `fallback_providers` — e.g.
   hand-added paid last-resort models — is preserved, in order, at the end.
+  A pin (`state["pinned"]`) freezes `model.default` only; the chain still
+  rotates, so a pinned model never costs you a live safety net.
 - **Catalog** writes a model-catalog manifest listing the free models ahead of
   Hermes's own curated OpenRouter models, and points
   `model_catalog.providers.openrouter.url` at it with a `file://` URL.
@@ -67,6 +69,8 @@ class SyncPlan:
     current_chain: list[dict[str, Any]] = field(default_factory=list)
     new_chain: list[dict[str, Any]] = field(default_factory=list)
     managed_fallbacks: list[dict[str, str]] = field(default_factory=list)
+    pinned: str | None = None       # the manual override this plan honoured
+    pin_cleared: str | None = None  # why the pin was dropped, if it was
 
 
 @dataclass
@@ -348,6 +352,22 @@ def write_manifest(plan: CatalogPlan) -> None:
     tmp.replace(path)
 
 
+def read_manifest_ids() -> list[str]:
+    """Every model id the manifest offers, or [] if there isn't a usable one.
+
+    This is exactly the set `/model` shows, so it's the right thing to check a
+    pin against — and it's a local file, so `pin` stays network-free.
+    """
+    try:
+        data = json.loads(manifest_path().read_text(encoding="utf-8"))
+        models = data["providers"][CATALOG_PROVIDER]["models"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    if not isinstance(models, list):
+        return []
+    return [m["id"] for m in models if isinstance(m, dict) and isinstance(m.get("id"), str)]
+
+
 def _entry_key(entry: dict[str, Any]) -> tuple[str, str]:
     return (str(entry.get("provider", "")), str(entry.get("model", "")))
 
@@ -359,6 +379,35 @@ def _is_managed_shape(entry: dict[str, Any]) -> bool:
     )
 
 
+def _validate_pin(
+    pinned: str | None,
+    plan: SyncPlan,
+    free_models_by_id: dict[str, dict[str, Any]],
+    today,
+) -> str | None:
+    """Return the pin if it's still usable, else None and record why not.
+
+    `free_models_by_id` holds only `:free` models, so absence means two
+    different things depending on the id. For a `:free` pin it means
+    OpenRouter withdrew the model and the pin must go, or the user is left
+    pointed at a dead endpoint with rotation disabled. For a paid or curated
+    id it just means the free list was never where it lived — those have no
+    expiry to check, so leave them alone.
+    """
+    if not pinned:
+        return None
+    model = free_models_by_id.get(pinned)
+    if model is None:
+        if pinned.endswith(":free"):
+            plan.pin_cleared = f"{pinned} is no longer offered by OpenRouter"
+            return None
+        return pinned
+    if is_expired(model.get("expiration_date"), today):
+        plan.pin_cleared = f"{pinned} has expired"
+        return None
+    return pinned
+
+
 def build_plan(
     cfg: dict[str, Any],
     selected: list[Candidate],
@@ -367,6 +416,7 @@ def build_plan(
     force: bool,
     today,
     free_models_by_id: dict[str, dict[str, Any]],
+    pinned: str | None = None,
 ) -> SyncPlan:
     from hermes_cli.fallback_config import get_fallback_chain
 
@@ -398,8 +448,17 @@ def build_plan(
     if not state.get("managed_fallbacks") and not state.get("managed_default"):
         managed_keys |= {_entry_key(e) for e in current_chain if _is_managed_shape(e)}
 
-    plan.new_default = selected[0].id
-    fallback_ids = [c.id for c in selected[1:]]
+    pin = _validate_pin(pinned, plan, free_models_by_id, today)
+    if pin:
+        # Only model.default freezes. The chain keeps rotating so the safety
+        # net stays on live models, and the pin is dropped from it — a
+        # fallback identical to the default is a wasted retry.
+        plan.pinned = pin
+        plan.new_default = pin
+        fallback_ids = [c.id for c in selected if c.id != pin]
+    else:
+        plan.new_default = selected[0].id
+        fallback_ids = [c.id for c in selected[1:]]
     new_managed = [{"provider": "openrouter", "model": mid} for mid in fallback_ids]
     preserved = [e for e in current_chain if _entry_key(e) not in managed_keys]
     plan.new_chain = new_managed + preserved
@@ -422,6 +481,10 @@ def build_plan(
             plan.reasons.append(f"current default {current_default} is no longer offered")
         if default_expired:
             plan.reasons.append(f"current default {current_default} has expired")
+    if plan.pin_cleared:
+        plan.reasons.append(f"pin cleared: {plan.pin_cleared} — rotation resumed")
+    if plan.pinned:
+        plan.reasons.append(f"default pinned to {plan.pinned} — not rotating it")
     if chain_changed:
         plan.reasons.append("fallback chain updated")
     if force and not (default_changed or chain_changed):
@@ -436,6 +499,30 @@ def _mutate_rotation(plan: SyncPlan, cfg: dict[str, Any]) -> None:
     cfg["fallback_providers"] = plan.new_chain
 
 
+def _backup_config() -> None:
+    """Best-effort copy of config.yaml; save_config itself is atomic."""
+    from hermes_cli.config import get_config_path
+
+    try:
+        shutil.copy2(get_config_path(), state_dir() / "config.yaml.pre-sync.bak")
+    except OSError:
+        pass
+
+
+def apply_pin(cfg: dict[str, Any], model_id: str) -> None:
+    """Switch model.default to `model_id` and nothing else.
+
+    Pinning also switches, so that `pin <id>` is one action rather than a
+    setting that only takes effect at the next sync. The fallback chain is
+    deliberately untouched — sync still owns it.
+    """
+    from hermes_cli.config import save_config
+
+    _backup_config()
+    cfg.setdefault("model", {})["default"] = model_id
+    save_config(cfg)
+
+
 def apply_all(
     cfg: dict[str, Any],
     rotation: SyncPlan | None = None,
@@ -447,15 +534,12 @@ def apply_all(
     would risk a torn state where the rotation landed but the catalog didn't
     (or vice versa), leaving state.json's two ledgers disagreeing with disk.
     """
-    from hermes_cli.config import get_config_path, save_config
+    from hermes_cli.config import save_config
 
     if rotation is None and catalog is None:
         return
 
-    try:
-        shutil.copy2(get_config_path(), state_dir() / "config.yaml.pre-sync.bak")
-    except OSError:
-        pass  # backup is best-effort; save_config itself is atomic
+    _backup_config()
 
     if rotation is not None:
         _mutate_rotation(rotation, cfg)
