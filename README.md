@@ -89,64 +89,43 @@ first, then Hermes's curated ones) and points
 /model  →  OpenRouter (45 models)  →  13 free first, then Hermes's own 32
 ```
 
-They join the existing OpenRouter row rather than getting their own, so
-`model.provider` stays `openrouter` and cost tracking, request quirks and
-rotation all keep working. Works in the CLI *and* the gateway (Discord,
-Telegram), which read the catalog through different code paths.
-
 > [!IMPORTANT]
 > **Restart Hermes before picking a free model — `/model` won't show them
 > otherwise.** Hermes caches the catalog for the life of the process, so any
 > session or gateway already running when `sync` wrote the list keeps showing
-> the old one. `/model --refresh` is *not* enough; it clears a different cache.
+> the old one.
 >
 > ```
 > /restart                # inside a session (CLI, Discord, Telegram)
 > hermes gateway restart  # from a shell, for the gateway
 > ```
 >
-> Rotation is unaffected — `model.default` is read from config.yaml per
+> Auto Model Rotation is unaffected since `model.default` is read from config.yaml per
 > request, so a rotated default applies with no restart. `/freemodels` also
 > needs one restart to appear, since slash commands register at plugin load.
 
-**Ordering is the only signal in the picker**, which renders bare model IDs —
-a `← private` badge would make it an invalid ID. So models run strictly
-best→worst: `private` → `logs` → `trains` → `unknown` → currently down, with
-popularity breaking ties inside each tier. For the labelled view use
-`/freemodels` in a session, or `hermes freemodels list`:
+For the labelled view use: `/freemodels` in a session, or `hermes freemodels list`:
 
 ```
-Rank  Model                        Privacy  Served by  Uptime  Status
----------------------------------------------------------------------
-  #1  tencent/hy3:free             Private  Chutes        99%  ← Default
-  #2  cohere/north-mini-code:free  Private  Cohere       100%  ← Fallback #1
-  #3  nvidia/nemotron:free         Logs     NVIDIA        94%  Retains prompts
+Rank  Model                                     Privacy  Served by         Uptime  Status
+-----------------------------------------------------------------------------------------
+  #8  inclusionai/ling-3.0-tiny:free            Private  NovitaAI             99%  ← Default
+  #4  cohere/north-mini-code:free               Logs     Cohere               97%  ← Fallback #1
+ #10  google/gemma-4-26b-a4b-it:free            Logs     Darkbloom            97%  ← Fallback #2
+ #11  openai/gpt-oss-20b:free                   Logs     Darkbloom            97%  Retains prompts
+ #13  google/gemma-4-31b-it:free                Logs     Google AI Studio     99%  Retains prompts
+  #1  nvidia/nemotron-3-ultra-550b-a55b:free    Trains   NVIDIA              100%  Trains on prompts
+ ...
 ```
+- **Note:** At the time of running this command, there is only 1 fully private model, which is why the fallback models are logging models. Also, only **tool-capable** models are listed.
+- Models are ordered from best→worst: `private` → `logs` → `trains` → `unknown` → currently down, with popularity breaking ties inside each tier. 
 
-In a chat client the table is wrapped in a code block so it stays aligned;
-in a terminal it isn't, since the font is already monospaced.
-
-Scope differs from rotation: **the picker lists every free model, including
-ones that train on your prompts.** Auto-selection never picks those, but the
-picker can't warn you if you choose one by hand — hence the labels. Only
-tool-capable models are listed; Hermes is an agent, and a model that can't
-call tools fails on its first turn.
-
-Opt out per run with `sync --no-catalog`, or drop the list entirely with
-`hermes freemodels remove-catalog` (deletes the manifest and config pointer,
-restoring the picker exactly).
-
-**Stale entries can't linger.** Each sync rebuilds the manifest from the live
-free list plus a fresh upstream read, never from its own previous output — and
-Hermes intersects it against the live catalog anyway, so a model that vanishes
-is gone from the picker even before the next sync.
-
-**Caveat:** Hermes only surfaces the OpenRouter row when it considers the
-provider authenticated — an `OPENROUTER_API_KEY` env var, or a credential pool
-with at least one key not exhausted. If every pooled key is in cooldown the row
-falls back to the built-in list; `sync` warns when it detects this.
+Opt out per run with `sync --no-catalog`, or drop the list entirely with `hermes freemodels remove-catalog` (deletes the manifest and config pointer, restoring the picker exactly).
 
 ## Install
+
+> [!IMPORTANT]
+> Make sure you have the Openrouter provider configured in Hermes with an Openrouter API Key added.
 
 ```bash
 # Portable — clone anywhere, then install into ~/.hermes/plugins/
