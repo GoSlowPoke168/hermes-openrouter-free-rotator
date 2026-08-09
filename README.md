@@ -17,7 +17,8 @@ Writes happen only when the selection actually changes, so a model expiring
 tomorrow is replaced *before* it goes dark.
 
 It also puts **every** free model into Hermes's `/model` picker so you can
-switch to one by hand — see [Browsing free models](#browsing-free-models).
+switch to one by hand — see [Browsing free models](#browsing-free-models) — and
+lets you [pin](#pinning-a-model) one so rotation leaves it alone.
 
 **Prerequisite:** `model.provider` in `config.yaml` must already be
 `openrouter`. If it's anything else, `sync` aborts without touching your
@@ -122,6 +123,23 @@ Rank  Model                                     Privacy  Served by         Uptim
 
 Opt out per run with `sync --no-catalog`, or drop the list entirely with `hermes freemodels remove-catalog` (deletes the manifest and config pointer, restoring the picker exactly).
 
+## Pinning a model
+
+Picking a model in `/model` isn't enough on its own — the next sync rotates `model.default` straight back. Pin it to stop that:
+
+```bash
+hermes freemodels pin cohere/north-mini-code:free   # switch to it and hold it
+hermes freemodels pin                               # hold what you already picked
+hermes freemodels unpin                             # back to automatic
+```
+
+Also available in chat as `/freemodels pin <model-id>` and `/freemodels unpin`, so you don't need a shell.
+
+- Pinning **switches as well as freezes** — one step, not a setting that waits for the next sync.
+- Only `model.default` is frozen. The fallback chain keeps rotating, so a pin never costs you a live safety net, and the pinned model is dropped from its own fallbacks.
+- **A pin can't strand you:** if a pinned `:free` model expires or stops being offered, the next sync drops the pin, resumes rotation, and records why — shown in `status` and `/freemodels`. Paid models are pinnable too and never auto-clear, since they don't expire.
+- Typos are rejected — ids are checked against the `/model` catalog (`--force` overrides).
+
 ## Install
 
 > [!IMPORTANT]
@@ -151,6 +169,9 @@ hermes freemodels sync                  # apply the best selection (idempotent)
 hermes freemodels sync --dry-run        # preview the change without writing
 hermes freemodels sync --no-catalog     # rotate only; leave the /model list alone
 hermes freemodels status                # current selection, last sync, last error
+hermes freemodels pin <model-id>        # switch to a model and stop rotating it
+hermes freemodels pin                   # pin whatever you already picked in /model
+hermes freemodels unpin                 # resume automatic rotation
 hermes freemodels remove-catalog        # drop the free models from /model
 hermes freemodels install-cron --apply  # run daily (default 00:01 UTC; --time HH:MM)
 ```
@@ -158,7 +179,8 @@ hermes freemodels install-cron --apply  # run daily (default 00:01 UTC; --time H
 Inside a Hermes session, `/freemodels` prints the same table (`/freemodels full`
 includes skipped models, `/freemodels json` the raw snapshot). It reads the
 last sync's cached results — never the network mid-conversation — and says when
-they've gone stale.
+they've gone stale. `/freemodels pin <model-id>` and `/freemodels unpin` work
+from chat too, so you don't need a shell.
 
 ## How it works
 
@@ -195,7 +217,8 @@ Both remove the free models from `/model` first. Your `model.default` and
 fallback chain are left as-is.
 
 ## TODO
-- [ ] Add a feature where you can manually choose a model you want to override the free model it chose and the fallback sequence. This should be set until the user either unsets it or the model expires.
+- [x] Add a feature where you can manually choose a model you want to override the free model it chose. This should be set until the user either unsets it or the model expires. — see [Pinning a model](#pinning-a-model)
+- [ ] Extend pinning to the **fallback sequence**, not just `model.default`. Deferred, not rejected: a frozen chain goes stale and would point at expired models exactly when it's needed, so it likely wants per-entry pins or a re-validation pass rather than a blanket freeze. Hand-added fallback entries are already preserved verbatim today.
 - [x] Add the feature where it automatically loads all models into Hermes' `/model` list so you can choose which one you want. — see [Browsing free models](#browsing-free-models)
 - [ ] Add a feature where it overrides the privacy-first models to allow the user to choose an option that makes the freemodel rotator select models that allow logging, or allow training as well. *(Note: this is about **auto-selection** — the `/model` picker already lists every tier.)*
 
