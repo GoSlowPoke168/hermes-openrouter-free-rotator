@@ -16,6 +16,9 @@ drops anything unsuitable, and rewrites your Hermes config:
 Writes happen only when the selection actually changes, so a model expiring
 tomorrow is replaced *before* it goes dark.
 
+It also puts **every** free model into Hermes's `/model` picker so you can
+switch to one by hand — see [Browsing free models](#browsing-free-models).
+
 **Prerequisite:** `model.provider` in `config.yaml` must already be
 `openrouter`. If it's anything else, `sync` aborts without touching your
 config — the plugin only ever manages a setup you've already pointed at
@@ -74,6 +77,75 @@ Eligible models are ranked by the collection's real-usage order, with privacy
 tier taking priority (every private pick outranks any logs pick). If the
 collection page can't be read, ranking falls back to newest-first.
 
+## Browsing free models
+
+Hermes's `/model` picker only offers OpenRouter models from a curated catalog,
+so free ones outside it are normally unreachable by hand. Each `sync` writes
+its own manifest (`~/.hermes/freemodels/model-catalog.json` — free models
+first, then Hermes's curated ones) and points
+`model_catalog.providers.openrouter.url` at it:
+
+```
+/model  →  OpenRouter (45 models)  →  13 free first, then Hermes's own 32
+```
+
+They join the existing OpenRouter row rather than getting their own, so
+`model.provider` stays `openrouter` and cost tracking, request quirks and
+rotation all keep working. Works in the CLI *and* the gateway (Discord,
+Telegram), which read the catalog through different code paths.
+
+> [!IMPORTANT]
+> **Restart Hermes before picking a free model — `/model` won't show them
+> otherwise.** Hermes caches the catalog for the life of the process, so any
+> session or gateway already running when `sync` wrote the list keeps showing
+> the old one. `/model --refresh` is *not* enough; it clears a different cache.
+>
+> ```
+> /restart                # inside a session (CLI, Discord, Telegram)
+> hermes gateway restart  # from a shell, for the gateway
+> ```
+>
+> Rotation is unaffected — `model.default` is read from config.yaml per
+> request, so a rotated default applies with no restart. `/freemodels` also
+> needs one restart to appear, since slash commands register at plugin load.
+
+**Ordering is the only signal in the picker**, which renders bare model IDs —
+a `← private` badge would make it an invalid ID. So models run strictly
+best→worst: `private` → `logs` → `trains` → `unknown` → currently down, with
+popularity breaking ties inside each tier. For the labelled view use
+`/freemodels` in a session, or `hermes freemodels list`:
+
+```
+Rank  Model                        Privacy  Served by  Uptime  Status
+---------------------------------------------------------------------
+  #1  tencent/hy3:free             Private  Chutes        99%  ← Default
+  #2  cohere/north-mini-code:free  Private  Cohere       100%  ← Fallback #1
+  #3  nvidia/nemotron:free         Logs     NVIDIA        94%  Retains prompts
+```
+
+In a chat client the table is wrapped in a code block so it stays aligned;
+in a terminal it isn't, since the font is already monospaced.
+
+Scope differs from rotation: **the picker lists every free model, including
+ones that train on your prompts.** Auto-selection never picks those, but the
+picker can't warn you if you choose one by hand — hence the labels. Only
+tool-capable models are listed; Hermes is an agent, and a model that can't
+call tools fails on its first turn.
+
+Opt out per run with `sync --no-catalog`, or drop the list entirely with
+`hermes freemodels remove-catalog` (deletes the manifest and config pointer,
+restoring the picker exactly).
+
+**Stale entries can't linger.** Each sync rebuilds the manifest from the live
+free list plus a fresh upstream read, never from its own previous output — and
+Hermes intersects it against the live catalog anyway, so a model that vanishes
+is gone from the picker even before the next sync.
+
+**Caveat:** Hermes only surfaces the OpenRouter row when it considers the
+provider authenticated — an `OPENROUTER_API_KEY` env var, or a credential pool
+with at least one key not exhausted. If every pooled key is in cooldown the row
+falls back to the built-in list; `sync` warns when it detects this.
+
 ## Install
 
 ```bash
@@ -90,27 +162,24 @@ bash ~/.hermes/plugins/hermes-openrouter-free-rotator/install.sh
 ```
 
 The installer enables the plugin and creates its state directory. Restart your
-Hermes session (or gateway) to pick up the new `freemodels` command.
+Hermes session (or gateway) to pick up `freemodels` and `/freemodels`.
 
 ## Usage
 
 ```bash
-hermes freemodels list                  # ranked candidates: tier, uptime, expiry, skip reasons
+hermes freemodels list                  # ranked table: tier, endpoint, uptime, status
 hermes freemodels sync                  # apply the best selection (idempotent)
 hermes freemodels sync --dry-run        # preview the change without writing
+hermes freemodels sync --no-catalog     # rotate only; leave the /model list alone
 hermes freemodels status                # current selection, last sync, last error
+hermes freemodels remove-catalog        # drop the free models from /model
 hermes freemodels install-cron --apply  # run daily (default 00:01 UTC; --time HH:MM)
 ```
 
-`sync` exits `0` on success or no-change and `1` on failure (logged to
-`~/.hermes/freemodels/cron.log`). On any failure it leaves your config
-untouched; Hermes's own runtime fallback chain is the safety net.
-
-**No systemd service here** — this plugin runs as a daily cron job (see
-`install-cron` above), not a background service. There's nothing to
-`systemctl restart`; to re-run manually or pick up code changes just run
-`hermes freemodels sync`. Check `crontab -l` to see the installed line and
-`~/.hermes/freemodels/cron.log` for its output.
+Inside a Hermes session, `/freemodels` prints the same table (`/freemodels full`
+includes skipped models, `/freemodels json` the raw snapshot). It reads the
+last sync's cached results — never the network mid-conversation — and says when
+they've gone stale.
 
 ## How it works
 
@@ -124,20 +193,17 @@ untouched; Hermes's own runtime fallback chain is the safety net.
   every run and evaluated *before* the privacy scrape so down models are
   dropped cheaply.
 
-A typical daily run is one API call plus a handful of page fetches.
-
 ## State & files
 
 Everything lives under `~/.hermes/freemodels/`:
 
 | File | Purpose |
 |------|---------|
-| `state.json` | Ownership ledger (which entries the plugin manages) + privacy cache |
+| `state.json` | Ownership ledgers (rotation + `/model` catalog), privacy cache, last table snapshot |
+| `model-catalog.json` | Generated catalog manifest feeding Hermes's `/model` picker |
 | `freemodels.log` | Rotating activity log |
 | `cron.log` | Output of scheduled runs |
 | `config.yaml.pre-sync.bak` | Backup taken before every config write |
-
-Config is written through Hermes's own atomic writer, preserving file mode.
 
 ## Uninstall
 
@@ -146,12 +212,13 @@ Config is written through Hermes's own atomic writer, preserving file mode.
 ./uninstall.sh --purge   # also remove the state dir and crontab entry
 ```
 
-Your `config.yaml` is left as-is on uninstall.
+Both remove the free models from `/model` first. Your `model.default` and
+fallback chain are left as-is.
 
 ## TODO
 - [ ] Add a feature where you can manually choose a model you want to override the free model it chose and the fallback sequence. This should be set until the user either unsets it or the model expires.
-- [ ] Add the feature where it automatically loads all models into Hermes' `/models` list so you can choose which one you want.
-- [ ] Add a feature where it overrides the privacy-first models to allow the user to choose an option that makes the freemodel rotator select models that allow logging, or allow training as well.
+- [x] Add the feature where it automatically loads all models into Hermes' `/model` list so you can choose which one you want. — see [Browsing free models](#browsing-free-models)
+- [ ] Add a feature where it overrides the privacy-first models to allow the user to choose an option that makes the freemodel rotator select models that allow logging, or allow training as well. *(Note: this is about **auto-selection** — the `/model` picker already lists every tier.)*
 
 ## License
 
