@@ -5,6 +5,19 @@ order, falling back to API metadata) → privacy classification in rank order
 (via an injected lookup, so callers control caching/rate limits) → choose
 all "private" models first, topping up from "logs" only when fewer than
 *want* private ones exist. "trains" and "unknown" are never selectable.
+
+Two products come out of one pass:
+
+- ``selected`` — the 3 models the plugin writes to model.default and the
+  leading fallback_providers. Privacy-gated; unchanged by the catalog work.
+- ``catalog`` — *every* listable free model, ordered best→worst, which the
+  caller writes to providers.openrouter.models so Hermes's /model picker can
+  offer them. Includes tiers that are never auto-selected (they sort last),
+  because the user picking one by hand is an informed choice.
+
+Classification therefore runs over every ranked candidate rather than
+stopping once enough private models are found — the catalog needs a tier for
+each one to order and label it.
 """
 
 from __future__ import annotations
@@ -13,11 +26,36 @@ import datetime as _dt
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .openrouter import TIER_LOGS, TIER_PRIVATE, Availability, Privacy
+from .openrouter import (
+    TIER_LOGS,
+    TIER_PRIVATE,
+    TIER_TRAINS,
+    TIER_UNKNOWN,
+    Availability,
+    Privacy,
+)
 
 EXPIRY_BUFFER_DAYS = 1  # skip a model once it's within 1 day of expiring
 DEFAULT_WANT = 3
-MAX_PRIVACY_LOOKUPS = 12
+# Safety valve, not a tuning knob: bounds one sync's work if OpenRouter ever
+# ships hundreds of free models. Overflow is catalogued-but-unclassified
+# rather than dropped, so the picker list stays complete either way.
+MAX_CLASSIFICATIONS = 40
+
+# Machine-readable disposition. The renderer switches on this so no caller
+# ever has to string-match the human-readable `reason`.
+OUTCOME_SELECTED = "selected"          # written to config as default/fallback
+OUTCOME_CATALOG = "catalog"            # classified and listable, not chosen
+OUTCOME_DEGRADED = "degraded"          # endpoint exists but is down today
+OUTCOME_UNCLASSIFIED = "unclassified"  # budget ran out before we got to it
+OUTCOME_SKIPPED = "skipped"            # never eligible, never listed
+
+# Catalog ordering, best first. Degraded and unclassified models sort after
+# every classified one — they're listable, just not recommendable.
+CATALOG_TIER_ORDER = (TIER_PRIVATE, TIER_LOGS, TIER_TRAINS, TIER_UNKNOWN)
+_CATALOG_BUCKET = {tier: i for i, tier in enumerate(CATALOG_TIER_ORDER)}
+BUCKET_DEGRADED = len(CATALOG_TIER_ORDER)
+BUCKET_UNCLASSIFIED = BUCKET_DEGRADED + 1
 
 
 @dataclass
@@ -34,6 +72,12 @@ class Candidate:
     endpoint_provider: str | None = None
     uptime_1d: float | None = None   # best free-endpoint uptime %, once checked
     reason: str = ""             # human-readable selection/skip reason
+    outcome: str = OUTCOME_SKIPPED   # machine-readable disposition
+    available: bool | None = None    # availability verdict; None = not checked
+    has_free_endpoint: bool = True   # False → OpenRouter offers no free route
+    classified: bool = False         # a privacy lookup actually ran
+    role_index: int | None = None    # 0 = default, 1 = fallback #1, ...
+    in_catalog: bool = False         # listed in the /model picker
 
     @classmethod
     def from_api(cls, m: dict[str, Any]) -> "Candidate":
@@ -53,11 +97,17 @@ class Candidate:
 class SelectionResult:
     selected: list[Candidate] = field(default_factory=list)
     candidates: list[Candidate] = field(default_factory=list)  # all, with reasons
+    catalog: list[Candidate] = field(default_factory=list)     # picker list, best first
     used_fallback_ranking: bool = False
+    budget_exhausted: bool = False
 
     @property
     def ok(self) -> bool:
         return bool(self.selected)
+
+    @property
+    def catalog_ids(self) -> list[str]:
+        return [c.id for c in self.catalog]
 
 
 def _parse_date(value: str) -> _dt.date | None:
@@ -103,6 +153,42 @@ def rank_candidates(
     return ranked, not order_index
 
 
+def catalog_bucket(c: Candidate) -> int:
+    """Sort bucket for the picker list — lower is better."""
+    if c.outcome == OUTCOME_UNCLASSIFIED:
+        return BUCKET_UNCLASSIFIED
+    if c.available is False:
+        return BUCKET_DEGRADED
+    return _CATALOG_BUCKET.get(c.tier or TIER_UNKNOWN, _CATALOG_BUCKET[TIER_UNKNOWN])
+
+
+def build_catalog(ranked: list[Candidate]) -> list[Candidate]:
+    """Order every listable model best→worst for the /model picker.
+
+    Listable means eligible (ranked) *and* actually offered free by someone.
+    A down endpoint stays in — availability is volatile, the catalog is
+    written once a day, and a 0%-today model has usually recovered by the
+    time the user opens the picker — but it sorts below every healthy one.
+    Ranks are unique, so (bucket, rank) is a total order and two runs over
+    the same input always produce the same list.
+    """
+    listable = [c for c in ranked if c.rank is not None and c.has_free_endpoint]
+    listable.sort(key=lambda c: (catalog_bucket(c), c.rank or 0))
+    for c in listable:
+        c.in_catalog = True
+    return listable
+
+
+def _catalog_reason(tier: str | None, want: int) -> str:
+    if tier == TIER_PRIVATE:
+        return "listed: private tier"
+    if tier == TIER_LOGS:
+        return "held: retains prompts (logs tier) — used only if <%d private" % want
+    if tier == TIER_TRAINS:
+        return "listed: trains on prompts — never auto-selected"
+    return "listed: privacy tier could not be determined — never auto-selected"
+
+
 def select_models(
     api_models: list[dict[str, Any]],
     collection_order: list[str] | None,
@@ -112,7 +198,7 @@ def select_models(
     today: _dt.date,
     want: int = DEFAULT_WANT,
     expiry_buffer_days: int = EXPIRY_BUFFER_DAYS,
-    max_privacy_lookups: int = MAX_PRIVACY_LOOKUPS,
+    max_classifications: int = MAX_CLASSIFICATIONS,
 ) -> SelectionResult:
     candidates = [Candidate.from_api(m) for m in api_models]
 
@@ -131,13 +217,15 @@ def select_models(
 
     private_pool: list[Candidate] = []
     logs_pool: list[Candidate] = []
+    budget_exhausted = False
     lookups = 0
     for c in ranked:
-        if len(private_pool) >= want:
-            c.reason = c.reason or "not needed: enough higher-ranked private models"
-            continue
-        if lookups >= max_privacy_lookups:
-            c.reason = "skipped: lookup budget exhausted"
+        # Classify every ranked candidate, not just enough to fill `want`:
+        # the catalog needs a tier for each model to order and label it.
+        if lookups >= max_classifications:
+            c.outcome = OUTCOME_UNCLASSIFIED
+            c.reason = "not classified: lookup budget exhausted"
+            budget_exhausted = True
             continue
         lookups += 1
 
@@ -145,22 +233,29 @@ def select_models(
         # before we spend a page scrape on privacy.
         availability = availability_of(c.id)
         c.uptime_1d = availability.best_uptime_1d
+        c.available = availability.ok
+        c.has_free_endpoint = availability.has_free_endpoint
         if not availability.ok:
             c.tier = None
             c.endpoint_provider = availability.endpoint_provider
-            c.reason = f"skipped: {availability.reason}"
+            if availability.has_free_endpoint:
+                c.outcome = OUTCOME_DEGRADED
+                c.reason = f"listed last: {availability.reason}"
+            else:
+                c.outcome = OUTCOME_SKIPPED
+                c.reason = f"skipped: {availability.reason}"
             continue
 
         privacy = privacy_of(c.base_slug)
         c.tier = privacy.tier
+        c.classified = True
+        c.outcome = OUTCOME_CATALOG
         c.endpoint_provider = privacy.endpoint_provider or availability.endpoint_provider
+        c.reason = _catalog_reason(privacy.tier, want)
         if privacy.tier == TIER_PRIVATE:
             private_pool.append(c)
         elif privacy.tier == TIER_LOGS:
             logs_pool.append(c)
-            c.reason = "held: retains prompts (logs tier) — used only if <%d private" % want
-        else:
-            c.reason = f"skipped: privacy tier '{privacy.tier}'"
 
     # Tier dominates popularity: every private pick outranks any logs pick,
     # so a retains-prompts model can never become the default while a private
@@ -173,10 +268,14 @@ def select_models(
 
     for i, c in enumerate(selected):
         role = "default" if i == 0 else f"fallback #{i}"
+        c.outcome = OUTCOME_SELECTED
+        c.role_index = i
         c.reason = f"selected: {role} ({c.tier} tier)"
 
     return SelectionResult(
         selected=selected,
         candidates=candidates,
+        catalog=build_catalog(ranked),
         used_fallback_ranking=used_fallback,
+        budget_exhausted=budget_exhausted,
     )

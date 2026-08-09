@@ -162,20 +162,24 @@ def test_fallback_ranking_by_created_when_no_collection_order():
     assert [c.id for c in result.selected] == ["b/new:free", "c/mid:free", "a/old:free"]
 
 
-def test_privacy_lookup_budget():
+def test_classification_budget_caps_lookups():
     models = [_model(f"m/x{i}") for i in range(6)]
     calls = []
 
     def lookup(slug):
         calls.append(slug)
-        return Privacy(tier=TIER_TRAINS)  # nothing qualifies → exhaust budget
+        return Privacy(tier=TIER_TRAINS)  # nothing qualifies → nothing selectable
 
     result = select_models(
         models, [f"m/x{i}" for i in range(6)], lookup, _all_up,
-        today=TODAY, max_privacy_lookups=4,
+        today=TODAY, max_classifications=4,
     )
     assert len(calls) == 4
     assert not result.ok
+    # Budget bounds the *lookups*, not the catalog: the tail is still listed,
+    # just unclassified and sorted last.
+    assert len(result.catalog) == 6
+    assert result.budget_exhausted
 
 
 # ---- assess_availability (pure) ------------------------------------------

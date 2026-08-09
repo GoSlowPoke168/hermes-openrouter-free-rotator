@@ -14,12 +14,13 @@ import json
 import logging
 import logging.handlers
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from .openrouter import Privacy
 
-STATE_VERSION = 1
+STATE_VERSION = 2  # v2 adds the catalog ledger + presentation snapshot
 PRIVACY_TTL_HOURS = 24
 
 
@@ -53,6 +54,14 @@ def default_state() -> dict[str, Any]:
         "managed_fallbacks": [],
         "previous_default": None,
         "privacy_cache": {},
+        # Catalog ownership: the exact ids last written to
+        # providers.openrouter.models, so a rewrite can drop ours and leave
+        # any the user added by hand alone.
+        "managed_catalog": [],
+        "managed_catalog_written": None,
+        # Presentation snapshot for `/freemodels`, which must not hit the
+        # network from an interactive session.
+        "catalog": {"generated": None, "ranking": None, "warning": None, "rows": []},
     }
 
 
@@ -82,6 +91,31 @@ def save_state(state: dict[str, Any]) -> None:
 
 def now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+
+
+@contextmanager
+def sync_lock():
+    """Hold an exclusive lock for the read-modify-write span over config.yaml.
+
+    Hermes's own config lock is in-process only, so a cron run overlapping a
+    manual `sync` can interleave load_config/save_config and drop one of the
+    two keys we write. Yields True when the lock was taken, False when another
+    sync already holds it (caller should back off rather than block — the
+    other run is doing the same work).
+    """
+    import fcntl
+
+    path = state_dir() / "sync.lock"
+    with open(path, "w") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
 
 
 # ---------------------------------------------------------------------------

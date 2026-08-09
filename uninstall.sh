@@ -14,6 +14,15 @@ STATE_DIR="$HERMES_HOME/freemodels"
 PURGE=0
 [ "${1:-}" = "--purge" ] && PURGE=1
 
+# Always clean the /model picker list — it's a display list maintained by a
+# plugin that's going away, so leaving stale free models in the picker is a
+# bug, not a preserved preference. Must run BEFORE --purge deletes the state
+# dir, which holds the ledger of which entries are ours.
+if command -v hermes >/dev/null 2>&1; then
+  hermes freemodels remove-catalog 2>/dev/null || \
+    echo "warning: could not clean providers.openrouter.models — remove it by hand" >&2
+fi
+
 if [ -L "$TARGET" ]; then
   rm -f "$TARGET"
   echo "removed symlink $TARGET"
@@ -35,4 +44,5 @@ else
   echo "state kept at $STATE_DIR (use --purge to remove it and the cron entry)"
 fi
 
-echo "note: config.yaml was not modified — your current model.default stays as-is."
+echo "note: your model.default and fallback_providers are untouched; only the"
+echo "      plugin's free-model list under providers.openrouter.models was removed."

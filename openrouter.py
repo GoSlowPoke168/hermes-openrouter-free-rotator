@@ -74,6 +74,10 @@ class Availability:
     best_uptime_1d: float | None = None
     endpoint_provider: str | None = None
     fetched: bool = True
+    # False only when OpenRouter offers no free endpoint at all. Distinct from
+    # ok=False, which also covers "offered but down today" — a down endpoint is
+    # still worth listing (it usually recovers), a missing one never is.
+    has_free_endpoint: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -82,6 +86,7 @@ class Availability:
             "best_uptime_1d": self.best_uptime_1d,
             "endpoint_provider": self.endpoint_provider,
             "fetched": self.fetched,
+            "has_free_endpoint": self.has_free_endpoint,
         }
 
 
@@ -125,7 +130,11 @@ def assess_availability(data: dict[str, Any], min_uptime: float = MIN_UPTIME_1D)
     """
     endpoints = data.get("endpoints") if isinstance(data.get("endpoints"), list) else []
     if not endpoints:
-        return Availability(ok=False, reason="no free endpoint currently offered")
+        return Availability(
+            ok=False,
+            reason="no free endpoint currently offered",
+            has_free_endpoint=False,
+        )
 
     def uptime(ep: dict) -> float | None:
         v = ep.get("uptime_last_1d")

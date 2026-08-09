@@ -26,6 +26,11 @@ def _setup_parser(parser) -> None:
     p_sync.add_argument(
         "--force", action="store_true", help="Rewrite config even if selection is unchanged"
     )
+    p_sync.add_argument(
+        "--no-catalog",
+        action="store_true",
+        help="Don't refresh the free-model list shown in Hermes's /model picker",
+    )
     p_sync.add_argument("--json", action="store_true", help="Machine-readable output")
 
     p_status = sub.add_parser("status", help="Show current selection and last sync result")
@@ -35,6 +40,11 @@ def _setup_parser(parser) -> None:
         "list", help="List all :free candidates with rank, privacy tier and skip reasons"
     )
     p_list.add_argument("--json", action="store_true", help="Machine-readable output")
+
+    sub.add_parser(
+        "remove-catalog",
+        help="Remove this plugin's free models from Hermes's /model picker",
+    )
 
     p_cron = sub.add_parser(
         "install-cron", help="Print (or install with --apply) the daily crontab entry"
@@ -53,15 +63,30 @@ def _setup_parser(parser) -> None:
 
 def _dispatch(args) -> None:
     # Lazy import so plugin load stays cheap for every other hermes invocation.
-    from .cli import cmd_install_cron, cmd_list, cmd_status, cmd_sync
+    from .cli import (
+        cmd_install_cron,
+        cmd_list,
+        cmd_remove_catalog,
+        cmd_status,
+        cmd_sync,
+    )
 
     handlers = {
         "sync": cmd_sync,
         "status": cmd_status,
         "list": cmd_list,
+        "remove-catalog": cmd_remove_catalog,
         "install-cron": cmd_install_cron,
     }
     handlers[args.fm_cmd](args)
+
+
+def _slash_freemodels(raw_args: str) -> str:
+    # Same lazy-import discipline as _dispatch: register() runs on every
+    # plugin discovery and must not pull in requests / hermes_cli.
+    from .cli import slash_freemodels
+
+    return slash_freemodels(raw_args)
 
 
 def register(ctx) -> None:
@@ -75,3 +100,17 @@ def register(ctx) -> None:
             "OpenRouter models whose free endpoints do not train on prompts."
         ),
     )
+
+    # The /model picker renders bare model-id strings, so it cannot show
+    # privacy tiers. This is the companion: check tiers here, switch there.
+    try:
+        ctx.register_command(
+            name="freemodels",
+            handler=_slash_freemodels,
+            description="Ranked free OpenRouter models this plugin manages",
+            args_hint="[full|json]",
+        )
+    except Exception:
+        # Older host without register_command — the CLI command still works,
+        # and a missing slash command must never break plugin load.
+        pass

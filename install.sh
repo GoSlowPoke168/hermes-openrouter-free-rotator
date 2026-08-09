@@ -29,7 +29,7 @@ for arg in "$@"; do
 done
 
 FILES=(plugin.yaml __init__.py openrouter.py selection.py state.py configsync.py
-       croninstall.py cli.py README.md after-install.md uninstall.sh)
+       croninstall.py cli.py render.py README.md after-install.md uninstall.sh)
 
 mkdir -p "$PLUGINS_DIR" "$STATE_DIR"
 
