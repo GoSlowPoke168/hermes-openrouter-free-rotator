@@ -2,9 +2,13 @@
 
 Pipeline: hard filters (tool support, expiry buffer) → rank (collection
 order, falling back to API metadata) → privacy classification in rank order
-(via an injected lookup, so callers control caching/rate limits) → choose
-all "private" models first, topping up from "logs" only when fewer than
-*want* private ones exist. "trains" and "unknown" are never selectable.
+(via an injected lookup, so callers control caching/rate limits) → pick
+*want* models according to the active `Mode`.
+
+A mode carries two independent rules — which tiers may be selected, and
+whether tier order outranks popularity — so the four are a table, not a
+scale. "unknown" is selectable in none of them: it means the privacy scrape
+failed, not that a model is a particular kind. See `MODES`.
 
 Two products come out of one pass:
 
@@ -12,8 +16,9 @@ Two products come out of one pass:
   leading fallback_providers. Privacy-gated; unchanged by the catalog work.
 - ``catalog`` — *every* listable free model, ordered best→worst, which the
   caller writes to providers.openrouter.models so Hermes's /model picker can
-  offer them. Includes tiers that are never auto-selected (they sort last),
-  because the user picking one by hand is an informed choice.
+  offer them. Includes tiers the active mode won't auto-select (they sort
+  last), because the user picking one by hand is an informed choice — the
+  catalog is deliberately identical under every mode.
 
 Classification therefore runs over every ranked candidate rather than
 stopping once enough private models are found — the catalog needs a tier for
@@ -56,6 +61,47 @@ CATALOG_TIER_ORDER = (TIER_PRIVATE, TIER_LOGS, TIER_TRAINS, TIER_UNKNOWN)
 _CATALOG_BUCKET = {tier: i for i, tier in enumerate(CATALOG_TIER_ORDER)}
 BUCKET_DEGRADED = len(CATALOG_TIER_ORDER)
 BUCKET_UNCLASSIFIED = BUCKET_DEGRADED + 1
+
+
+@dataclass(frozen=True)
+class Mode:
+    """How much privacy to trade for a better-ranked model.
+
+    Two rules vary independently, which is why these are a table rather than
+    a scale: `balanced` and `relaxed` allow the same tiers and differ only in
+    whether tier order beats popularity.
+    """
+
+    name: str
+    tiers: tuple[str, ...]  # selectable, best-privacy first
+    tier_dominant: bool     # True: every tier beats the next. False: rank decides.
+    summary: str            # one line, reused by the CLI, status and README
+
+
+MODES = {
+    m.name: m
+    for m in (
+        Mode("strict", (TIER_PRIVATE,), True, "private only"),
+        Mode("balanced", (TIER_PRIVATE, TIER_LOGS), True,
+             "private first, logs as fallback"),
+        Mode("relaxed", (TIER_PRIVATE, TIER_LOGS), False,
+             "private + logs, best rank wins"),
+        Mode("loose", (TIER_PRIVATE, TIER_LOGS, TIER_TRAINS), False,
+             "adds models that train on prompts, best rank wins"),
+    )
+}
+DEFAULT_MODE = "balanced"
+# TIER_UNKNOWN is in no mode on purpose: it marks a failed privacy scrape, so
+# selecting one would mean "auto-pick a model whose policy we couldn't read".
+
+
+def resolve_mode(name: str | None) -> Mode:
+    """Look up a mode by name, falling back to the default.
+
+    Never raises — the name comes from state.json, and a typo there must not
+    take rotation down.
+    """
+    return MODES.get(name or "", MODES[DEFAULT_MODE])
 
 
 @dataclass
@@ -179,14 +225,16 @@ def build_catalog(ranked: list[Candidate]) -> list[Candidate]:
     return listable
 
 
-def _catalog_reason(tier: str | None, want: int) -> str:
-    if tier == TIER_PRIVATE:
-        return "listed: private tier"
-    if tier == TIER_LOGS:
-        return "held: retains prompts (logs tier) — used only if <%d private" % want
-    if tier == TIER_TRAINS:
-        return "listed: trains on prompts — never auto-selected"
-    return "listed: privacy tier could not be determined — never auto-selected"
+def _catalog_reason(tier: str | None, want: int, mode: Mode) -> str:
+    """Why a classified model was or wasn't a candidate, under this mode."""
+    if tier == TIER_UNKNOWN or tier is None:
+        return "listed: privacy tier could not be determined — never auto-selected"
+    if tier not in mode.tiers:
+        return f"listed: {tier} tier — not selectable in {mode.name} mode"
+    if mode.tier_dominant and tier != mode.tiers[0]:
+        better = " or ".join(mode.tiers[: mode.tiers.index(tier)])
+        return f"held: {tier} tier — used only if <{want} {better}"
+    return f"listed: {tier} tier"
 
 
 def select_models(
@@ -199,7 +247,9 @@ def select_models(
     want: int = DEFAULT_WANT,
     expiry_buffer_days: int = EXPIRY_BUFFER_DAYS,
     max_classifications: int = MAX_CLASSIFICATIONS,
+    mode: Mode | None = None,
 ) -> SelectionResult:
+    mode = mode or MODES[DEFAULT_MODE]
     candidates = [Candidate.from_api(m) for m in api_models]
 
     eligible: list[Candidate] = []
@@ -215,8 +265,8 @@ def select_models(
     # Unranked (filtered-out) candidates keep rank=None; rank the full list
     # for display purposes only after eligibility so ranks reflect choices.
 
-    private_pool: list[Candidate] = []
-    logs_pool: list[Candidate] = []
+    # One pool per selectable tier, filled in rank order.
+    pools: dict[str, list[Candidate]] = {t: [] for t in mode.tiers}
     budget_exhausted = False
     lookups = 0
     for c in ranked:
@@ -251,20 +301,21 @@ def select_models(
         c.classified = True
         c.outcome = OUTCOME_CATALOG
         c.endpoint_provider = privacy.endpoint_provider or availability.endpoint_provider
-        c.reason = _catalog_reason(privacy.tier, want)
-        if privacy.tier == TIER_PRIVATE:
-            private_pool.append(c)
-        elif privacy.tier == TIER_LOGS:
-            logs_pool.append(c)
+        c.reason = _catalog_reason(privacy.tier, want, mode)
+        if privacy.tier in pools:
+            pools[privacy.tier].append(c)
 
-    # Tier dominates popularity: every private pick outranks any logs pick,
-    # so a retains-prompts model can never become the default while a private
-    # one exists. Within a tier, collection rank order is preserved.
-    selected = private_pool[:want]
-    for c in logs_pool:
-        if len(selected) >= want:
-            break
-        selected.append(c)
+    if mode.tier_dominant:
+        # Tier beats popularity: every private pick outranks any logs pick, so
+        # a retains-prompts model can never become the default while a private
+        # one exists. Rank order is preserved within each tier.
+        ordered = [c for tier in mode.tiers for c in pools[tier]]
+    else:
+        # Popularity beats tier: any allowed model can win on rank alone.
+        ordered = sorted(
+            (c for pool in pools.values() for c in pool), key=lambda c: c.rank or 0
+        )
+    selected = ordered[:want]
 
     for i, c in enumerate(selected):
         role = "default" if i == 0 else f"fallback #{i}"

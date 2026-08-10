@@ -64,6 +64,21 @@ def _setup_parser(parser) -> None:
 
     sub.add_parser("unpin", help="Resume automatic rotation of model.default")
 
+    p_mode = sub.add_parser(
+        "mode", help="Show or set which privacy tiers auto-selection may pick from"
+    )
+    p_mode.add_argument(
+        "mode",
+        nargs="?",
+        # Names duplicated rather than imported: _setup_parser runs on every
+        # plugin discovery and must not pull in .selection. cli._do_mode
+        # validates against selection.MODES, which stays the source of truth.
+        choices=["strict", "balanced", "relaxed", "loose"],
+        help="strict=private only, balanced=private then logs (default), "
+        "relaxed=private+logs by rank, loose=also trains-on-prompts by rank. "
+        "Omit to show the current mode.",
+    )
+
     p_cron = sub.add_parser(
         "install-cron", help="Print (or install with --apply) the daily crontab entry"
     )
@@ -84,6 +99,7 @@ def _dispatch(args) -> None:
     from .cli import (
         cmd_install_cron,
         cmd_list,
+        cmd_mode,
         cmd_pin,
         cmd_remove_catalog,
         cmd_status,
@@ -98,6 +114,7 @@ def _dispatch(args) -> None:
         "remove-catalog": cmd_remove_catalog,
         "pin": cmd_pin,
         "unpin": cmd_unpin,
+        "mode": cmd_mode,
         "install-cron": cmd_install_cron,
     }
     handlers[args.fm_cmd](args)
@@ -130,7 +147,7 @@ def register(ctx) -> None:
             name="freemodels",
             handler=_slash_freemodels,
             description="Ranked free OpenRouter models this plugin manages",
-            args_hint="[full|json|pin <model-id>|unpin]",
+            args_hint="[full|json|pin <model-id>|unpin|mode <name>]",
         )
     except Exception:
         # Older host without register_command — the CLI command still works,

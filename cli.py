@@ -71,6 +71,7 @@ def _run_selection(state: dict[str, Any], log) -> tuple[selection.SelectionResul
         _availability_lookup(log),
         today=_today(),
         max_classifications=_max_classifications(),
+        mode=selection.resolve_mode(state.get("selection_mode")),
     )
     state_mod.prune_privacy_cache(state, {c.base_slug for c in result.candidates})
     return result, {str(m["id"]): m for m in api_models}
@@ -309,7 +310,13 @@ def _sync(args, state: dict[str, Any], log) -> None:
         # No rotation possible, but the catalog is independent of the privacy
         # gate — write it anyway so /model still gains the free models.
         _apply_catalog_only(args, state, log, cfg, catalog_plan)
-        _fail(state, log, "no qualifying free models (tools + not expiring + private/logs tier)")
+        mode = selection.resolve_mode(state.get("selection_mode"))
+        widen = "" if mode.name == "loose" else " — try a wider `hermes freemodels mode`"
+        _fail(
+            state, log,
+            f"no qualifying free models in {mode.name} mode "
+            f"({'/'.join(mode.tiers)} tier, tool-capable, not expiring){widen}",
+        )
         return
 
     plan = configsync.build_plan(
@@ -436,6 +443,7 @@ def cmd_status(args) -> None:
         "managed_catalog_written": state.get("managed_catalog_written"),
         "pinned": state.get("pinned"),
         "pinned_at": state.get("pinned_at"),
+        "selection_mode": selection.resolve_mode(state.get("selection_mode")).name,
         "last_sync": state.get("last_sync"),
         "last_change": state.get("last_change"),
         "last_error": state.get("last_error"),
@@ -443,7 +451,9 @@ def cmd_status(args) -> None:
     if args.json:
         print(json.dumps(info, indent=2))
         return
+    mode = selection.resolve_mode(state.get("selection_mode"))
     print(f"current default:  {current_default}")
+    print(f"mode:             {mode.name} — {mode.summary}")
     if state.get("pinned"):
         since = state.get("pinned_at") or "unknown"
         print(f"pinned:           {state['pinned']} since {since} — rotation paused")
@@ -572,6 +582,58 @@ def _do_unpin() -> tuple[bool, str]:
     )
 
 
+def _mode_listing(active: str) -> str:
+    """The four modes, one per line, marking the active one."""
+    return "\n".join(
+        f"  {'*' if name == active else ' '} {name:<9} {m.summary}"
+        for name, m in selection.MODES.items()
+    )
+
+
+def _do_mode(name: str | None) -> tuple[bool, str]:
+    """Read or set the selection mode. Returns (ok, message).
+
+    No network and no config write — a mode only takes effect the next time
+    selection runs, which the message has to say so nobody waits for a change
+    that hasn't happened yet.
+    """
+    log = state_mod.get_logger()
+    if name is not None and name.lower() not in selection.MODES:
+        return False, (
+            f"unknown mode '{name}'. Valid modes:\n{_mode_listing('')}"
+        )
+
+    with state_mod.sync_lock() as acquired:
+        if not acquired:
+            return False, "a sync is running right now — try again in a moment."
+        state = state_mod.load_state()
+        current = selection.resolve_mode(state.get("selection_mode"))
+        if name is None:
+            return True, (
+                f"**Selection mode:** {current.name} — {current.summary}\n"
+                f"{_mode_listing(current.name)}\n"
+                "Set one with `mode <name>`."
+            )
+        chosen = selection.MODES[name.lower()]
+        state["selection_mode"] = chosen.name
+        state_mod.save_state(state)
+        log.info("mode: %s -> %s", current.name, chosen.name)
+
+    note = ""
+    if chosen.name == "loose":
+        note = "\n⚠️ This allows models that train on your prompts."
+    elif chosen.name == "strict":
+        note = (
+            "\nOnly private models qualify — if there are fewer than 3, you get "
+            "fewer fallbacks, and if there are none the sync leaves your config alone."
+        )
+    return True, (
+        f"Selection mode: {chosen.name} — {chosen.summary}.{note}\n"
+        "Run `hermes freemodels sync` to apply it now; otherwise it takes effect "
+        "at the next daily run."
+    )
+
+
 def _emit(ok: bool, message: str) -> None:
     """Print a (ok, message) pair the way every other command reports."""
     if ok:
@@ -587,6 +649,10 @@ def cmd_pin(args) -> None:
 
 def cmd_unpin(args) -> None:
     _emit(*_do_unpin())
+
+
+def cmd_mode(args) -> None:
+    _emit(*_do_mode(args.mode))
 
 
 def cmd_list(args) -> None:
@@ -727,8 +793,8 @@ def slash_freemodels(raw_args: str) -> str:
 
     Never hits the network — a round-trip would stall the interactive turn, so
     the view is served from the state.json snapshot and the staleness banner
-    names the command to refresh it. `pin`/`unpin` do write, but only when
-    typed explicitly; viewing is still free of side effects.
+    names the command to refresh it. `pin`/`unpin`/`mode` do write, but only
+    when typed explicitly; viewing is still free of side effects.
     """
     parts = (raw_args or "").strip().split()
     # Tokenised rather than compared whole, because a model id must keep its
@@ -736,6 +802,8 @@ def slash_freemodels(raw_args: str) -> str:
     verb = parts[0].lower() if parts else ""
     target = parts[1] if len(parts) > 1 else None
 
+    if verb == "mode":
+        return _do_mode(target)[1]
     if verb == "pin":
         return _do_pin(target, force=False)[1]
     if verb == "unpin":
@@ -759,12 +827,15 @@ def slash_freemodels(raw_args: str) -> str:
 
     last_sync = state.get("last_sync")
     scope = "All candidates" if verb == "full" else "Available in /model"
+    mode = selection.resolve_mode(state.get("selection_mode"))
     lines = [
         "**Free OpenRouter Models**",
-        f"{scope}: {len(rows)} · Last synced {_age_str(last_sync)}",
+        f"{scope}: {len(rows)} · Mode: {mode.name} · Last synced {_age_str(last_sync)}",
     ]
 
     notes: list[str] = []
+    if mode.name == "loose":
+        notes.append("⚠️ Mode `loose` — models that train on your prompts can be selected.")
     if pinned:
         notes.append(
             f"📌 Pinned to `{pinned}` — rotation paused. `/freemodels unpin` to resume."
@@ -788,7 +859,8 @@ def slash_freemodels(raw_args: str) -> str:
     hint = (
         ""
         if verb == "full"
-        else "Pin one with `/freemodels pin <model-id>` so sync stops changing it. "
+        else "Pin one with `/freemodels pin <model-id>` so sync stops changing it, or "
+        "widen auto-selection with `/freemodels mode`. "
         "`/freemodels full` also lists models that were skipped."
     )
     # Budget the footer too, not just the header — it is part of the message

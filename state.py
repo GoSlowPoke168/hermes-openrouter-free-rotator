@@ -67,6 +67,10 @@ def default_state() -> dict[str, Any]:
         "pinned": None,
         "pinned_at": None,
         "pin_cleared_note": None,
+        # Which privacy tiers auto-selection may pick from. None means the
+        # default mode, so changing that default later doesn't require
+        # rewriting anyone's state.json.
+        "selection_mode": None,
         # Presentation snapshot for `/freemodels`, which must not hit the
         # network from an interactive session.
         "catalog": {"generated": None, "ranking": None, "warning": None, "rows": []},
