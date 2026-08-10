@@ -5,3 +5,6 @@ __pycache__/
 # coverage
 .coverage
 htmlcov/
+
+# tests are kept locally, not published
+tests/
