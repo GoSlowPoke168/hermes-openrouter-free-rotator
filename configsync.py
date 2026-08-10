@@ -358,14 +358,7 @@ def read_manifest_ids() -> list[str]:
     This is exactly the set `/model` shows, so it's the right thing to check a
     pin against — and it's a local file, so `pin` stays network-free.
     """
-    try:
-        data = json.loads(manifest_path().read_text(encoding="utf-8"))
-        models = data["providers"][CATALOG_PROVIDER]["models"]
-    except (OSError, ValueError, KeyError, TypeError):
-        return []
-    if not isinstance(models, list):
-        return []
-    return [m["id"] for m in models if isinstance(m, dict) and isinstance(m.get("id"), str)]
+    return _manifest_ids(read_manifest())
 
 
 def _entry_key(entry: dict[str, Any]) -> tuple[str, str]:

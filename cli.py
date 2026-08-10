@@ -17,10 +17,10 @@ STALE_AFTER_HOURS = 26
 
 def _today() -> _dt.date:
     # HERMES_FREEMODELS_TODAY lets tests simulate an expiry day without waiting.
-    override = os.environ.get("HERMES_FREEMODELS_TODAY")
-    if override:
-        return _dt.date.fromisoformat(override)
-    return _dt.date.today()
+    try:
+        return _dt.date.fromisoformat(os.environ["HERMES_FREEMODELS_TODAY"])
+    except (KeyError, ValueError):
+        return _dt.date.today()
 
 
 def _privacy_lookup(state: dict[str, Any], log):
@@ -74,7 +74,9 @@ def _run_selection(state: dict[str, Any], log) -> tuple[selection.SelectionResul
         mode=selection.resolve_mode(state.get("selection_mode")),
     )
     state_mod.prune_privacy_cache(state, {c.base_slug for c in result.candidates})
-    return result, {str(m["id"]): m for m in api_models}
+    # .get, not [], to match Candidate.from_api: one malformed entry in the API
+    # response must not take the whole sync down.
+    return result, {str(m.get("id", "")): m for m in api_models}
 
 
 def _snapshot_row(c: selection.Candidate) -> dict[str, Any]:
@@ -176,6 +178,26 @@ def _store_catalog_snapshot(
         "warning": warning or None,
         "rows": _ordered_snapshots(result),
     }
+
+
+def _persist_snapshot(state: dict[str, Any], log) -> None:
+    """Save only the two keys `list` owns, without clobbering a running sync.
+
+    `list` loads state, then spends minutes on the network before saving. A
+    sync finishing inside that window would have its ownership ledgers
+    overwritten by this stale copy — losing track of the entries it wrote and
+    orphaning them in config.yaml. So re-read under the lock and transplant
+    just the cache and the snapshot onto whatever is now on disk.
+    """
+    with state_mod.sync_lock() as acquired:
+        if not acquired:
+            # A sync holds the lock; it will write a fresher snapshot itself.
+            log.info("list: sync in progress — not persisting snapshot")
+            return
+        current = state_mod.load_state()
+        current["privacy_cache"] = state.get("privacy_cache", {})
+        current["catalog"] = state.get("catalog")
+        state_mod.save_state(current)
 
 
 def _fail(state: dict[str, Any], log, message: str) -> None:
@@ -598,22 +620,23 @@ def _do_mode(name: str | None) -> tuple[bool, str]:
     that hasn't happened yet.
     """
     log = state_mod.get_logger()
-    if name is not None and name.lower() not in selection.MODES:
-        return False, (
-            f"unknown mode '{name}'. Valid modes:\n{_mode_listing('')}"
+    if name is None:
+        # Reporting takes no lock: a sync can hold it for minutes, and there's
+        # no reason "which mode am I on?" should fail while one runs.
+        current = selection.resolve_mode(state_mod.load_state().get("selection_mode"))
+        return True, (
+            f"**Selection mode:** {current.name} — {current.summary}\n"
+            f"{_mode_listing(current.name)}\n"
+            "Set one with `mode <name>`."
         )
+    if name.lower() not in selection.MODES:
+        return False, f"unknown mode '{name}'. Valid modes:\n{_mode_listing('')}"
 
     with state_mod.sync_lock() as acquired:
         if not acquired:
             return False, "a sync is running right now — try again in a moment."
         state = state_mod.load_state()
         current = selection.resolve_mode(state.get("selection_mode"))
-        if name is None:
-            return True, (
-                f"**Selection mode:** {current.name} — {current.summary}\n"
-                f"{_mode_listing(current.name)}\n"
-                "Set one with `mode <name>`."
-            )
         chosen = selection.MODES[name.lower()]
         state["selection_mode"] = chosen.name
         state_mod.save_state(state)
@@ -666,7 +689,7 @@ def cmd_list(args) -> None:
 
     honored, warning = _catalog_will_be_honored()
     _store_catalog_snapshot(state, result, "" if honored else warning)
-    state_mod.save_state(state)  # persist warmed privacy cache + snapshot
+    _persist_snapshot(state, log)
 
     if args.json:
         # Unchanged contract: same envelope, same keys, same ordering. New
