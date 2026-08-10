@@ -1,5 +1,8 @@
 import datetime as dt
 
+import pytest
+
+from hermes_openrouter_free_rotator import openrouter as _or
 from hermes_openrouter_free_rotator.openrouter import (
     TIER_LOGS,
     TIER_PRIVATE,
@@ -214,3 +217,38 @@ def test_assess_availability_unknown_uptime_but_status_ok():
     data = {"endpoints": [{"provider_name": "New", "status": 0, "uptime_last_1d": None}]}
     a = assess_availability(data)
     assert a.ok  # brand-new endpoint, status ok → not blocked
+
+
+@pytest.mark.parametrize("status", ["ok", {}, [], "degraded"])
+def test_assess_availability_survives_a_non_numeric_status(status):
+    # This branch already means "no real signal"; it must not invent a
+    # negative one — and must not raise, since a raise here runs per candidate
+    # and would abort the whole sync.
+    data = {"endpoints": [{"provider_name": "Odd", "status": status, "uptime_last_1d": None}]}
+    assert assess_availability(data).ok
+
+
+def test_assess_availability_still_trusts_a_numeric_negative_status():
+    data = {"endpoints": [{"provider_name": "Down", "status": -1, "uptime_last_1d": None}]}
+    assert not assess_availability(data).ok
+
+
+def test_fetch_availability_fails_open_on_an_unparseable_payload(monkeypatch):
+    # Runs once per candidate, so an unexpected shape must degrade to
+    # "assume available", never take the sync down with it.
+    monkeypatch.setattr(_or, "_http_get", lambda *a, **k: '{"data": {"endpoints": "nonsense"}}')
+    monkeypatch.setattr(
+        _or, "assess_availability", lambda *a, **k: (_ for _ in ()).throw(TypeError("boom"))
+    )
+    a = _or.fetch_availability("x:free")
+    assert a.ok and a.fetched is False
+    assert "unexpected endpoints payload" in a.reason
+
+
+def test_fetch_availability_fails_open_when_the_api_is_unreachable(monkeypatch):
+    monkeypatch.setattr(
+        _or, "_http_get", lambda *a, **k: (_ for _ in ()).throw(OSError("no network"))
+    )
+    a = _or.fetch_availability("x:free")
+    assert a.ok and a.fetched is False
+    assert "unreachable" in a.reason

@@ -19,8 +19,10 @@ PURGE=0
 # bug, not a preserved preference. Must run BEFORE --purge deletes the state
 # dir, which holds the ledger of which entries are ours.
 if command -v hermes >/dev/null 2>&1; then
-  hermes freemodels remove-catalog 2>/dev/null || \
-    echo "warning: could not clean providers.openrouter.models — remove it by hand" >&2
+  hermes freemodels remove-catalog 2>/dev/null || {
+    echo "warning: could not remove the free models from /model — run" >&2
+    echo "         \`hermes freemodels remove-catalog\` by hand" >&2
+  }
 fi
 
 if [ -L "$TARGET" ]; then
@@ -37,7 +39,16 @@ if [ "$PURGE" -eq 1 ]; then
   rm -rf "$STATE_DIR"
   echo "removed $STATE_DIR"
   if crontab -l 2>/dev/null | grep -q "freemodels sync"; then
-    crontab -l 2>/dev/null | grep -v "freemodels sync" | crontab -
+    # `grep -v` exits 1 when it filters out every line — i.e. when ours was the
+    # only entry, the common case here. Under `set -o pipefail` that would
+    # abort the script after the crontab had already been rewritten, making a
+    # successful uninstall look like a failure. Capture, then write.
+    remaining="$(crontab -l 2>/dev/null | grep -v "freemodels sync" || true)"
+    if [ -n "$remaining" ]; then
+      printf '%s\n' "$remaining" | crontab -
+    else
+      crontab -r 2>/dev/null || true
+    fi
     echo "removed crontab entry"
   fi
 else
@@ -45,4 +56,4 @@ else
 fi
 
 echo "note: your model.default and fallback_providers are untouched; only the"
-echo "      plugin's free-model list under providers.openrouter.models was removed."
+echo "      plugin's free-model list in Hermes's /model picker was removed."
