@@ -4,146 +4,28 @@ A [Hermes Agent](https://hermes-agent.nousresearch.com) plugin that keeps your
 default and fallback models pointed at the best **free**, **privacy-respecting**
 OpenRouter models — automatically.
 
-Free (`:free`) OpenRouter models expire and disappear without notice. Once a
-day this plugin ranks the [free-models collection](https://openrouter.ai/collections/free-models),
+Free (`:free`) OpenRouter models expire and disappear without notice. Once a day
+this plugin ranks the [free-models collection](https://openrouter.ai/collections/free-models),
 drops anything unsuitable, and rewrites your Hermes config:
 
 - best pick → `model.default`
 - next two → the leading `fallback_providers`
-- any fallback entries you added yourself are preserved after them — the plugin
-  only ever touches the `:free` entries it owns (tracked in its own state file).
+- anything you added yourself is preserved after them — the plugin only ever
+  touches the `:free` entries it owns
 
 Writes happen only when the selection actually changes, so a model expiring
-tomorrow is replaced *before* it goes dark.
-
-It also puts **every** free model into Hermes's `/model` picker so you can
-switch to one by hand — see [Browsing free models](#browsing-free-models) — and
-lets you [pin](#pinning-a-model) one so rotation leaves it alone.
-
-**Prerequisite:** `model.provider` in `config.yaml` must already be
-`openrouter`. If it's anything else, `sync` aborts without touching your
-config — the plugin only ever manages a setup you've already pointed at
-OpenRouter, it won't switch providers for you. `fallback_providers` doesn't
-need to exist beforehand; if it's missing, the plugin creates it.
-
-### Example
-
-Before (freshly on OpenRouter, `fallback_providers` not yet set, one
-hand-added non-OpenRouter fallback already present):
-
-```yaml
-model:
-  provider: openrouter
-  default: some-model-that-just-expired:free
-  base_url: https://openrouter.ai/api/v1
-  api_mode: chat_completions
-fallback_providers:
-  - provider: google
-    model: gemini-3.1-flash-lite
-```
-
-After `hermes freemodels sync`:
-
-```yaml
-model:
-  provider: openrouter
-  default: tencent/hy3:free
-  base_url: https://openrouter.ai/api/v1
-  api_mode: chat_completions
-fallback_providers:
-  - provider: openrouter
-    model: cohere/north-mini-code:free
-  - provider: openrouter
-    model: openai/gpt-oss-20b:free
-  - provider: google
-    model: gemini-3.1-flash-lite
-```
-
-`model.default` and the leading `openrouter` entries in `fallback_providers`
-are plugin-managed and get rewritten on every sync; the `google` entry was
-added by hand, isn't tracked as managed, and is preserved in place after them.
-
-## Selection criteria
-
-A free model is eligible only if it is:
-
-| Criterion | Rule |
-|-----------|------|
-| **Private** | Its free endpoint's provider does not train on or retain prompts. Falls back to the **Logs** tier (retains but doesn't train) only if fewer than 3 private models exist. Providers that **train on prompts are never selected.** |
-| **Tool-capable** | The free endpoint supports `tools` — Hermes is an agent, so a model that can't call tools can't be the default. |
-| **Not expiring** | Models expiring within 1 day are skipped. |
-| **Available** | The free endpoint's day-long uptime is above ~20%. Lenient by design (a brief outage won't drop a model) and re-checked daily, so a recovered model returns automatically. |
-
-Eligible models are ranked by the collection's real-usage order, with privacy
-tier taking priority (every private pick outranks any logs pick). If the
-collection page can't be read, ranking falls back to newest-first.
-
-## Browsing free models
-
-Hermes's `/model` picker only offers OpenRouter models from a curated catalog,
-so free ones outside it are normally unreachable by hand. Each `sync` writes
-its own manifest (`~/.hermes/freemodels/model-catalog.json` — free models
-first, then Hermes's curated ones) and points
-`model_catalog.providers.openrouter.url` at it:
-
-```
-/model  →  OpenRouter (45 models)  →  13 free first, then Hermes's own 32
-```
-
-> [!IMPORTANT]
-> **Restart Hermes before picking a free model — `/model` won't show them
-> otherwise.** Hermes caches the catalog for the life of the process, so any
-> session or gateway already running when `sync` wrote the list keeps showing
-> the old one.
->
-> ```
-> /restart                # inside a session (CLI, Discord, Telegram)
-> hermes gateway restart  # from a shell, for the gateway
-> ```
->
-> Auto Model Rotation is unaffected since `model.default` is read from config.yaml per
-> request, so a rotated default applies with no restart. `/freemodels` also
-> needs one restart to appear, since slash commands register at plugin load.
-
-For the labelled view use: `/freemodels` in a session, or `hermes freemodels list`:
-
-```
-Rank  Model                                     Privacy  Served by         Uptime  Status
------------------------------------------------------------------------------------------
-  #8  inclusionai/ling-3.0-tiny:free            Private  NovitaAI             99%  ← Default
-  #4  cohere/north-mini-code:free               Logs     Cohere               97%  ← Fallback #1
- #10  google/gemma-4-26b-a4b-it:free            Logs     Darkbloom            97%  ← Fallback #2
- #11  openai/gpt-oss-20b:free                   Logs     Darkbloom            97%  Retains prompts
- #13  google/gemma-4-31b-it:free                Logs     Google AI Studio     99%  Retains prompts
-  #1  nvidia/nemotron-3-ultra-550b-a55b:free    Trains   NVIDIA              100%  Trains on prompts
- ...
-```
-- **Note:** At the time of running this command, there is only 1 fully private model, which is why the fallback models are logging models. Also, only **tool-capable** models are listed.
-- Models are ordered from best→worst: `private` → `logs` → `trains` → `unknown` → currently down, with popularity breaking ties inside each tier. 
-
-Opt out per run with `sync --no-catalog`, or drop the list entirely with `hermes freemodels remove-catalog` (deletes the manifest and config pointer, restoring the picker exactly).
-
-## Pinning a model
-
-Picking a model in `/model` isn't enough on its own — the next sync rotates `model.default` straight back. Pin it to stop that:
-
-```bash
-hermes freemodels pin cohere/north-mini-code:free   # switch to it and hold it
-hermes freemodels pin                               # hold what you already picked
-hermes freemodels unpin                             # back to automatic
-```
-
-Also available in chat as `/freemodels pin <model-id>` and `/freemodels unpin`, so you don't need a shell.
-
-- Pinning **switches as well as freezes** — one step, not a setting that waits for the next sync.
-- Only `model.default` is frozen. The fallback chain keeps rotating, so a pin never costs you a live safety net, and the pinned model is dropped from its own fallbacks.
-- **A pin can't strand you:** if a pinned `:free` model expires or stops being offered, the next sync drops the pin, resumes rotation, and records why — shown in `status` and `/freemodels`. Paid models are pinnable too and never auto-clear, since they don't expire.
-- Typos are rejected — ids are checked against the `/model` catalog (`--force` overrides).
+tomorrow is replaced *before* it goes dark. You can also
+[pick a model yourself](#choosing-a-model-yourself) or
+[change which privacy tiers qualify](#selection-modes).
 
 ## Install
 
 > [!IMPORTANT]
-> Make sure you have the Openrouter provider configured in Hermes with an Openrouter API Key added.
+> Set up the OpenRouter provider in Hermes first, with an API key added, so that
+> `model.provider` is `openrouter`. If it's anything else `sync` aborts without
+> touching your config — the plugin only manages a setup you've already pointed
+> at OpenRouter, it won't switch providers for you. `fallback_providers` doesn't
+> need to exist beforehand; it's created if missing.
 
 ```bash
 # Portable — clone anywhere, then install into ~/.hermes/plugins/
@@ -158,49 +40,161 @@ hermes plugins install GoSlowPoke168/hermes-openrouter-free-rotator
 bash ~/.hermes/plugins/hermes-openrouter-free-rotator/install.sh
 ```
 
-The installer enables the plugin and creates its state directory. Restart your
-Hermes session (or gateway) to pick up `freemodels` and `/freemodels`.
+The installer enables the plugin and creates its state directory. **Restart your
+Hermes session (or gateway)** to pick up the `freemodels` and `/freemodels`
+commands — they register at plugin load. Then:
 
-## Usage
+```bash
+hermes freemodels sync                  # apply the best selection now
+hermes freemodels install-cron --apply  # and keep it fresh daily
+```
+
+## Commands
 
 ```bash
 hermes freemodels list                  # ranked table: tier, endpoint, uptime, status
 hermes freemodels sync                  # apply the best selection (idempotent)
 hermes freemodels sync --dry-run        # preview the change without writing
 hermes freemodels sync --no-catalog     # rotate only; leave the /model list alone
-hermes freemodels status                # current selection, last sync, last error
+hermes freemodels status                # current selection, mode, pin, last sync, last error
 hermes freemodels pin <model-id>        # switch to a model and stop rotating it
 hermes freemodels pin                   # pin whatever you already picked in /model
 hermes freemodels unpin                 # resume automatic rotation
+hermes freemodels mode [name]           # show/set which privacy tiers may be picked
 hermes freemodels remove-catalog        # drop the free models from /model
 hermes freemodels install-cron --apply  # run daily (default 00:01 UTC; --time HH:MM)
 ```
 
 Inside a Hermes session, `/freemodels` prints the same table (`/freemodels full`
-includes skipped models, `/freemodels json` the raw snapshot). It reads the
-last sync's cached results — never the network mid-conversation — and says when
-they've gone stale. `/freemodels pin <model-id>` and `/freemodels unpin` work
-from chat too, so you don't need a shell.
+includes skipped models, `/freemodels json` the raw snapshot). It reads the last
+sync's cached results — never the network mid-conversation — and says when
+they've gone stale. `/freemodels pin <model-id>`, `/freemodels unpin` and
+`/freemodels mode <name>` work from chat too, so you don't need a shell.
+
+## Choosing a model yourself
+
+### Browsing free models
+
+Hermes's `/model` picker only offers OpenRouter models from a curated catalog, so
+free ones outside it are normally unreachable by hand. Each `sync` writes its own
+manifest (`~/.hermes/freemodels/model-catalog.json` — free models first, then
+Hermes's curated ones) and points `model_catalog.providers.openrouter.url` at it:
+
+```
+/model  →  OpenRouter (45 models)  →  13 free first, then Hermes's own 32
+```
+
+> [!IMPORTANT]
+> **Restart Hermes before picking a free model — `/model` won't show them
+> otherwise.** Hermes caches the catalog for the life of the process, so any
+> session or gateway already running when `sync` wrote the list keeps showing the
+> old one.
+>
+> ```
+> /restart                # inside a session (CLI, Discord, Telegram)
+> hermes gateway restart  # from a shell, for the gateway
+> ```
+>
+> Auto model rotation is unaffected: `model.default` is read from config.yaml per
+> request, so a rotated default applies with no restart.
+
+For the labelled view use `/freemodels` in a session, or `hermes freemodels list`:
+
+```
+Rank  Model                                     Privacy  Served by         Uptime  Status
+-----------------------------------------------------------------------------------------
+  #8  inclusionai/ling-3.0-tiny:free            Private  NovitaAI             99%  ← Default
+  #4  cohere/north-mini-code:free               Logs     Cohere               97%  ← Fallback #1
+ #10  google/gemma-4-26b-a4b-it:free            Logs     Darkbloom            97%  ← Fallback #2
+ #11  openai/gpt-oss-20b:free                   Logs     Darkbloom            97%  Retains prompts
+ #13  google/gemma-4-31b-it:free                Logs     Google AI Studio     99%  Retains prompts
+  #1  nvidia/nemotron-3-ultra-550b-a55b:free    Trains   NVIDIA              100%  Trains on prompts
+ ...
+```
+
+- Ordered best→worst: `private` → `logs` → `trains` → `unknown` → currently down, with popularity breaking ties inside each tier.
+- **Note:** at the time of running this, only 1 fully private model existed — which is why the fallbacks are logging models.
+- Opt out per run with `sync --no-catalog`, or drop the list entirely with `hermes freemodels remove-catalog` (deletes the manifest and config pointer, restoring the picker exactly).
+
+### Pinning a model
+
+Picking a model in `/model` isn't enough on its own — the next sync rotates
+`model.default` straight back. Pin it to stop that:
+
+```bash
+hermes freemodels pin cohere/north-mini-code:free   # switch to it and hold it
+hermes freemodels pin                               # hold what you already picked
+hermes freemodels unpin                             # back to automatic
+```
+
+- Pinning **switches as well as freezes** — one step, not a setting that waits for the next sync.
+- Only `model.default` is frozen. The fallback chain keeps rotating, so a pin never costs you a live safety net, and the pinned model is dropped from its own fallbacks.
+- **A pin can't strand you:** if a pinned `:free` model expires or stops being offered, the next sync drops the pin, resumes rotation, and records why — shown in `status` and `/freemodels`. Paid models are pinnable too and never auto-clear, since they don't expire.
+- Typos are rejected — ids are checked against the `/model` catalog (`--force` overrides).
+
+## Selection modes
+
+How much privacy to trade for a better-ranked model. Auto-selection only —
+`/model` always lists every tier regardless.
+
+```bash
+hermes freemodels mode           # show the current mode
+hermes freemodels mode relaxed   # set one  (also /freemodels mode relaxed)
+```
+
+| Mode | Tiers it may pick | Tiebreak |
+|------|-------------------|----------|
+| `strict` | private | — |
+| `balanced` *(default)* | private, logs | privacy — every private model beats every logs one |
+| `relaxed` | private, logs | **rank** — a popular logs model can beat a private one |
+| `loose` | private, logs, **trains** | **rank** |
+
+- `balanced` and `relaxed` allow the same tiers and differ *only* in what breaks the tie.
+- **`loose` can send your prompts to models that train on them.** It's shown in `status` and in the `/freemodels` header so it's never a silent state.
+- **`strict` can leave you with fewer fallbacks** — if only one private model exists you get a default and no free fallbacks, and if none exists the sync leaves your config untouched. That's deliberate.
+- `unknown` is never selectable in any mode: it means the privacy scrape failed, not that a model is a particular kind. Those models stay pickable by hand in `/model`.
+- A mode takes effect at the next `sync`, not immediately. A [pin](#pinning-a-model) overrides the mode for `model.default`; the fallback chain still follows it.
+
+## What it changes in your config
+
+Only `model.default` and the `openrouter` `:free` entries the plugin wrote
+itself. Everything else is left alone:
+
+```yaml
+fallback_providers:
+  - provider: openrouter          # managed — rewritten every sync
+    model: cohere/north-mini-code:free
+  - provider: openrouter          # managed — rewritten every sync
+    model: openai/gpt-oss-20b:free
+  - provider: google              # yours — never touched, always kept after ours
+    model: gemini-3.1-flash-lite
+```
+
+Ownership is tracked in the plugin's own state file, so an entry you add by hand
+is never mistaken for one of its own.
 
 ## How it works
 
-- **Ranking & expiry** come from the public models API (`/api/v1/models`) and
-  the collection page's usage order.
-- **Privacy** isn't in the public API, so the plugin reads each candidate's
-  model page and extracts its free endpoint's data policy. If several providers
-  serve a model free, the least private one decides its tier. Cached 24h.
-- **Uptime** comes from the `:free` endpoints API
-  (`/api/v1/models/<id>/endpoints`, field `uptime_last_1d`), checked fresh
-  every run and evaluated *before* the privacy scrape so down models are
-  dropped cheaply.
+A free model is eligible only if it is:
 
-## State & files
+| Criterion | Rule | Source |
+|-----------|------|--------|
+| **Right privacy tier** | Which tiers qualify is set by the [selection mode](#selection-modes). By default: private first, falling back to **Logs** (retains but doesn't train) only if fewer than 3 private models exist, and never **Trains**. | Not in the public API — the plugin reads each candidate's model page for its free endpoint's data policy. If several providers serve a model free, the least private one decides its tier. Cached 24h. |
+| **Tool-capable** | The free endpoint supports `tools` — Hermes is an agent, so a model that can't call tools can't be the default. | Models API (`/api/v1/models`) |
+| **Not expiring** | Models expiring within 1 day are skipped. | Models API |
+| **Available** | The free endpoint's day-long uptime is above ~20%. Lenient by design (a brief outage won't drop a model) and re-checked daily, so a recovered model returns automatically. | Endpoints API (`/api/v1/models/<id>/endpoints`, `uptime_last_1d`), checked fresh every run and evaluated *before* the privacy scrape so down models are dropped cheaply. |
+
+Eligible models are ranked by the collection page's real-usage order. Whether
+privacy tier outranks that order is what the [selection mode](#selection-modes)
+decides. If the collection page can't be read, ranking falls back to newest-first.
+
+## Files
 
 Everything lives under `~/.hermes/freemodels/`:
 
 | File | Purpose |
 |------|---------|
-| `state.json` | Ownership ledgers (rotation + `/model` catalog), privacy cache, last table snapshot |
+| `state.json` | Ownership ledgers (rotation + `/model` catalog), pin, mode, privacy cache, last table snapshot |
 | `model-catalog.json` | Generated catalog manifest feeding Hermes's `/model` picker |
 | `freemodels.log` | Rotating activity log |
 | `cron.log` | Output of scheduled runs |
@@ -220,7 +214,7 @@ fallback chain are left as-is.
 - [x] Add a feature where you can manually choose a model you want to override the free model it chose. This should be set until the user either unsets it or the model expires. — see [Pinning a model](#pinning-a-model)
 - [ ] Extend pinning to the **fallback sequence**, not just `model.default`. Deferred, not rejected: a frozen chain goes stale and would point at expired models exactly when it's needed, so it likely wants per-entry pins or a re-validation pass rather than a blanket freeze. Hand-added fallback entries are already preserved verbatim today.
 - [x] Add the feature where it automatically loads all models into Hermes' `/model` list so you can choose which one you want. — see [Browsing free models](#browsing-free-models)
-- [ ] Add a feature where it overrides the privacy-first models to allow the user to choose an option that makes the freemodel rotator select models that allow logging, or allow training as well. *(Note: this is about **auto-selection** — the `/model` picker already lists every tier.)*
+- [x] Add a feature where it overrides the privacy-first models to allow the user to choose an option that makes the freemodel rotator select models that allow logging, or allow training as well. — see [Selection modes](#selection-modes)
 
 ## License
 
