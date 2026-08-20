@@ -42,10 +42,9 @@ def build_cron_line(time_str: str = "00:01") -> str:
     local_target = utc_target.astimezone()
     hour, minute = local_target.hour, local_target.minute
     sd = state_dir()
-    flock = shutil.which("flock")
-    prefix = f"{flock} -n {sd}/sync.lock " if flock else ""
+
     return (
-        f"{minute} {hour} * * * {prefix}{hermes_bin()} freemodels sync "
+        f"{minute} {hour} * * * {hermes_bin()} freemodels sync "
         f">> {sd}/cron.log 2>&1"
     )
 
