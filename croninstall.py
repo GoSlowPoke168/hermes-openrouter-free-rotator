@@ -49,6 +49,36 @@ def build_cron_line(time_str: str = "00:01") -> str:
     )
 
 
+def find_stale_cron_line() -> str | None:
+    """Return the installed `freemodels sync` crontab line if it is the broken
+    flock-wrapped form, else None.
+
+    Releases up to 1.0.0 generated a line wrapping the command in
+    `flock -n <state_dir>/sync.lock`. cmd_sync() takes an fcntl.flock on that
+    same file, and flock(1) holds its own lock across the exec — so every
+    scheduled run exited with "another sync is already running" and the
+    default model silently stopped rotating.
+
+    Upgrading the plugin does not rewrite an already-installed crontab, so
+    callers surface this and point at `install-cron --apply`.
+    """
+    try:
+        proc = subprocess.run(
+            ["crontab", "-l"], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None            # no crontab binary, or it hung — not our problem
+    if proc.returncode != 0:
+        return None            # no crontab installed for this user
+    lock = f"{state_dir()}/sync.lock"
+    for line in proc.stdout.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        if CRON_MARKER in line and "flock" in line and lock in line:
+            return line.strip()
+    return None
+
+
 def install_cron_line(line: str) -> str:
     """Idempotently install *line* in the user crontab.
 

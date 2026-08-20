@@ -295,7 +295,30 @@ def _settle_pin(state: dict[str, Any], plan: configsync.SyncPlan, log) -> None:
     )
 
 
+def _warn_stale_cron() -> None:
+    """Surface a crontab still using the self-deadlocking flock wrapper.
+
+    Written to stderr so it lands in cron.log (the crontab line redirects
+    2>&1) — that is exactly where someone debugging a stale default looks.
+    Warn only: rewriting a user's crontab behind their back is not ours to do.
+    """
+    try:
+        stale = croninstall.find_stale_cron_line()
+    except Exception:
+        return                      # never let a health check break a sync
+    if not stale:
+        return
+    print(
+        "warning: your crontab wraps this command in flock(1), which makes "
+        "every scheduled run exit without syncing:\n"
+        f"  {stale}\n"
+        "  fix: run git pull and then hermes freemodels install-cron --apply",
+        file=sys.stderr,
+    )
+
+
 def cmd_sync(args) -> None:
+    _warn_stale_cron()
     log = state_mod.get_logger()
     with state_mod.sync_lock() as acquired:
         if not acquired:
@@ -445,6 +468,7 @@ def _sync(args, state: dict[str, Any], log) -> None:
 
 
 def cmd_status(args) -> None:
+    _warn_stale_cron()
     state = state_mod.load_state()
     try:
         from hermes_cli.config import load_config_readonly
