@@ -1,8 +1,9 @@
 """hermes-openrouter-free-rotator — auto-select the best private free OpenRouter models.
 
 Free OpenRouter models (":free" variants) come and go — some carry an
-expiration_date and simply vanish. This plugin keeps ~/.hermes/config.yaml
-pointed at the top 3 privacy-respecting free models from
+expiration_date and simply vanish. This plugin keeps Hermes's config.yaml
+(under the Hermes home directory) pointed at the top 3 privacy-respecting
+free models from
 https://openrouter.ai/collections/free-models: #1 becomes model.default,
 #2/#3 become the leading fallback_providers, and any fallback entries the
 plugin didn't add (e.g. paid last-resort models) are preserved at the end.

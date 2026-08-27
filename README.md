@@ -210,11 +210,15 @@ Everything lives under `~/.hermes/freemodels/`:
 Both remove the free models from `/model` first. Your `model.default` and
 fallback chain are left as-is.
 
-## TODO
-- [x] Add a feature where you can manually choose a model you want to override the free model it chose. This should be set until the user either unsets it or the model expires. — see [Pinning a model](#pinning-a-model)
-- [ ] Extend pinning to the **fallback sequence**, not just `model.default`. Deferred, not rejected: a frozen chain goes stale and would point at expired models exactly when it's needed, so it likely wants per-entry pins or a re-validation pass rather than a blanket freeze. Hand-added fallback entries are already preserved verbatim today.
-- [x] Add the feature where it automatically loads all models into Hermes' `/model` list so you can choose which one you want. — see [Browsing free models](#browsing-free-models)
-- [x] Add a feature where it overrides the privacy-first models to allow the user to choose an option that makes the freemodel rotator select models that allow logging, or allow training as well. — see [Selection modes](#selection-modes)
+### Permissions
+
+**This plugin requests no privileged capabilities.** It registers a CLI command
+and a slash command, reads OpenRouter's public API, and writes `config.yaml` and
+its own state directory - all unprivileged.
+
+```bash
+hermes plugins capabilities hermes-openrouter-free-rotator
+```
 
 ## License
 

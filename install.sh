@@ -64,7 +64,12 @@ else
 fi
 
 if command -v hermes >/dev/null 2>&1; then
-  hermes plugins enable "$PLUGIN_NAME" || \
+  if hermes plugins enable --help 2>/dev/null | grep -q -- '--no-allow-tool-override'; then
+    enable_cmd=(hermes plugins enable "$PLUGIN_NAME" --no-allow-tool-override)
+  else
+    enable_cmd=(hermes plugins enable "$PLUGIN_NAME")
+  fi
+  "${enable_cmd[@]}" || \
     echo "warning: could not enable plugin — run: hermes plugins enable $PLUGIN_NAME" >&2
 else
   echo "warning: 'hermes' not found on PATH — is Hermes Agent installed?" >&2
