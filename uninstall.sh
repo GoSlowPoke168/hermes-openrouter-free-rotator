@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Remove hermes-openrouter-free-rotator.
 #
-#   ./uninstall.sh           remove the plugin (symlink or copied dir)
-#   ./uninstall.sh --purge   also remove ~/.hermes/freemodels state dir and
-#                            the crontab entry
+#   ./uninstall.sh              interactive — asks standard vs purge
+#                                (falls back to standard if not run in a
+#                                terminal, e.g. piped or scripted)
+#   ./uninstall.sh --standard   remove the plugin; keep state + cron. No prompt.
+#   ./uninstall.sh --purge      also remove ~/.hermes/freemodels and the
+#                                crontab entry. No prompt.
 set -euo pipefail
 
 PLUGIN_NAME="hermes-openrouter-free-rotator"
@@ -11,8 +14,41 @@ HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 TARGET="$HERMES_HOME/plugins/$PLUGIN_NAME"
 STATE_DIR="$HERMES_HOME/freemodels"
 
+MODE=""
+case "${1:-}" in
+  --purge)    MODE="purge" ;;
+  --standard) MODE="standard" ;;
+  -h|--help)  sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  "")         ;;
+  *)          echo "unknown option: $1 (see --help)" >&2; exit 1 ;;
+esac
+
+if [ -z "$MODE" ]; then
+  if [ -t 0 ] && [ -t 1 ]; then
+    echo "Uninstall $PLUGIN_NAME"
+    echo
+    echo "  1) Standard — remove the plugin; keep state (pin, mode, privacy"
+    echo "                cache) and the daily cron job"
+    echo "  2) Purge    — also remove ~/.hermes/freemodels and the crontab entry"
+    echo "  3) Cancel"
+    echo
+    read -r -p "Choice [1]: " reply
+    case "$reply" in
+      2) MODE="purge" ;;
+      3) echo "cancelled — nothing removed."; exit 0 ;;
+      1|"") MODE="standard" ;;
+      *) echo "unrecognized choice '$reply' — defaulting to standard." >&2
+         MODE="standard" ;;
+    esac
+  else
+    MODE="standard"
+    echo "note: no terminal detected — defaulting to a standard uninstall" >&2
+    echo "      (state and cron kept). Pass --purge to remove them." >&2
+  fi
+fi
+
 PURGE=0
-[ "${1:-}" = "--purge" ] && PURGE=1
+[ "$MODE" = "purge" ] && PURGE=1
 
 # Always clean the /model picker list — it's a display list maintained by a
 # plugin that's going away, so leaving stale free models in the picker is a
