@@ -101,19 +101,19 @@ Hermes's curated ones) and points `model_catalog.providers.openrouter.url` at it
 For the labelled view use `/freemodels` in a session, or `hermes freemodels list`:
 
 ```
-Rank  Model                                     Privacy  Served by         Uptime  Status
------------------------------------------------------------------------------------------
-  #8  inclusionai/ling-3.0-tiny:free            Private  NovitaAI             99%  ← Default
-  #4  cohere/north-mini-code:free               Logs     Cohere               97%  ← Fallback #1
- #10  google/gemma-4-26b-a4b-it:free            Logs     Darkbloom            97%  ← Fallback #2
- #11  openai/gpt-oss-20b:free                   Logs     Darkbloom            97%  Retains prompts
- #13  google/gemma-4-31b-it:free                Logs     Google AI Studio     99%  Retains prompts
-  #1  nvidia/nemotron-3-ultra-550b-a55b:free    Trains   NVIDIA              100%  Trains on prompts
+Rank  Model                                               Privacy  Served by          Uptime  Status
+----------------------------------------------------------------------------------------------------
+ #13  z-ai/glm-5.2:free                                   Private  Decart               100%  ← Default
+ #15  inclusionai/ling-3.0-flash-fin:free                 Private  NovitaAI             100%  ← Fallback #1
+  #4  minimax/minimax-m3:free                             Logs     GMICloud             100%  ← Fallback #2
+  #6  cohere/north-mini-code:free                         Logs     Cohere                98%  Retains prompts
+ ...
+  #1  nvidia/nemotron-3-ultra-550b-a55b:free              Trains   NVIDIA                99%  Trains on prompts
+  #2  poolside/laguna-s-2.1:free                          Trains   Poolside             100%  Trains on prompts
  ...
 ```
 
 - Ordered best→worst: `private` → `logs` → `trains` → `unknown` → currently down, with popularity breaking ties inside each tier.
-- **Note:** at the time of running this, only 1 fully private model existed — which is why the fallbacks are logging models.
 - Opt out per run with `sync --no-catalog`, or drop the list entirely with `hermes freemodels remove-catalog` (deletes the manifest and config pointer, restoring the picker exactly).
 
 ### Pinning a model
