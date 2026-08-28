@@ -210,7 +210,7 @@ Everything lives under `~/.hermes/freemodels/`:
 Both remove the free models from `/model` first. Your `model.default` and
 fallback chain are left as-is.
 
-### Permissions
+## Permissions
 
 **This plugin requests no privileged capabilities.** It registers a CLI command
 and a slash command, reads OpenRouter's public API, and writes `config.yaml` and
