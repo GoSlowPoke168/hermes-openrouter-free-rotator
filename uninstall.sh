@@ -11,6 +11,7 @@ set -euo pipefail
 
 PLUGIN_NAME="hermes-openrouter-free-rotator"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+HERMES_HOME="${HERMES_HOME%/}"
 TARGET="$HERMES_HOME/plugins/$PLUGIN_NAME"
 STATE_DIR="$HERMES_HOME/freemodels"
 
@@ -74,12 +75,12 @@ fi
 if [ "$PURGE" -eq 1 ]; then
   rm -rf "$STATE_DIR"
   echo "removed $STATE_DIR"
-  if crontab -l 2>/dev/null | grep -q "freemodels sync"; then
-    # `grep -v` exits 1 when it filters out every line — i.e. when ours was the
-    # only entry, the common case here. Under `set -o pipefail` that would
-    # abort the script after the crontab had already been rewritten, making a
-    # successful uninstall look like a failure. Capture, then write.
-    remaining="$(crontab -l 2>/dev/null | grep -v "freemodels sync" || true)"
+  # crontab is per-user, not per-HERMES_HOME — only touch the line logging to our state dir
+  cron_log="$STATE_DIR/cron.log"
+  if crontab -l 2>/dev/null \
+      | awk -v l="$cron_log" 'index($0, "freemodels sync") && index($0, l) { f=1 } END { exit !f }'; then
+    remaining="$(crontab -l 2>/dev/null \
+      | awk -v l="$cron_log" '!(index($0, "freemodels sync") && index($0, l))' || true)"
     if [ -n "$remaining" ]; then
       printf '%s\n' "$remaining" | crontab -
     else

@@ -317,6 +317,13 @@ def _warn_stale_cron() -> None:
     )
 
 
+def _cron_missing() -> bool:
+    try:
+        return croninstall.cron_line_missing()
+    except Exception:
+        return False                # a health check must never break a command
+
+
 def cmd_sync(args) -> None:
     _warn_stale_cron()
     log = state_mod.get_logger()
@@ -493,6 +500,7 @@ def cmd_status(args) -> None:
         "last_sync": state.get("last_sync"),
         "last_change": state.get("last_change"),
         "last_error": state.get("last_error"),
+        "cron_missing": _cron_missing(),
     }
     if args.json:
         print(json.dumps(info, indent=2))
@@ -509,6 +517,11 @@ def cmd_status(args) -> None:
         print(f"pin cleared:      {state['pin_cleared_note']}")
     print(f"last sync:        {state.get('last_sync') or 'never'}")
     print(f"last change:      {state.get('last_change') or 'never'}")
+    if info["cron_missing"]:
+        print(
+            "daily cron:       NOT INSTALLED — nothing keeps your models fresh;"
+            " run `hermes freemodels install-cron --apply`"
+        )
     if managed_catalog:
         written = state.get("managed_catalog_written") or "unknown"
         stale = " (stale)" if _is_stale(state.get("last_sync")) else ""
@@ -891,6 +904,11 @@ def slash_freemodels(raw_args: str) -> str:
         notes.append(f"ℹ️ {state['pin_cleared_note']}")
     if _is_stale(last_sync):
         notes.append("⚠️ Data is stale — run `hermes freemodels sync` to refresh.")
+        if _cron_missing():
+            notes.append(
+                "⚠️ The daily sync isn't scheduled — run "
+                "`hermes freemodels install-cron --apply`."
+            )
     if state.get("last_error"):
         notes.append(f"⚠️ Last sync failed: {state['last_error']}")
     if snapshot.get("ranking") == "created":

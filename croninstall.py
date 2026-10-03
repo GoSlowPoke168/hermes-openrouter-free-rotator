@@ -79,10 +79,31 @@ def find_stale_cron_line() -> str | None:
     return None
 
 
+def is_own_cron_line(line: str) -> bool:
+    """True if *line* is the sync entry for this HERMES_HOME (crontab is per-user, not per-home)."""
+    return CRON_MARKER in line and f"{state_dir()}/cron.log" in line
+
+
+def cron_line_missing() -> bool:
+    """True when the user crontab has no active entry for this state dir; False if unreadable."""
+    try:
+        proc = subprocess.run(
+            ["crontab", "-l"], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if proc.returncode != 0:
+        return True            # "no crontab for <user>"
+    return not any(
+        is_own_cron_line(l) and not l.lstrip().startswith("#")
+        for l in proc.stdout.splitlines()
+    )
+
+
 def install_cron_line(line: str) -> str:
     """Idempotently install *line* in the user crontab.
 
-    A pre-existing line matching CRON_MARKER is replaced in place (same
+    A pre-existing entry for this state dir is replaced in place (same
     position, rest of the crontab untouched) rather than left stale — so
     rerunning `install-cron --apply` after a DST change re-pins the
     UTC-derived time in build_cron_line() without manual editing.
@@ -92,7 +113,7 @@ def install_cron_line(line: str) -> str:
     )
     current = proc.stdout if proc.returncode == 0 else ""
     lines = current.splitlines()
-    existing_idx = next((i for i, l in enumerate(lines) if CRON_MARKER in l), None)
+    existing_idx = next((i for i, l in enumerate(lines) if is_own_cron_line(l)), None)
     if existing_idx is not None:
         if lines[existing_idx] == line:
             return "crontab already contains this exact 'freemodels sync' entry — nothing to do."
