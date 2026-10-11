@@ -226,6 +226,49 @@ def _print_catalog_warning(honored: bool, warning: str, args) -> None:
     print(f"warning: {warning}", file=sys.stderr)
 
 
+def _view_warnings(state: dict[str, Any]) -> list[str]:
+    notes = []
+    if state.get("managed_catalog"):
+        notes.extend([
+            "Automatic updates: With daily scheduling enabled, sync fetches free models and "
+            "updates the config and picker catalog. Keep the gateway running for scheduled "
+            "syncs and periodic catalog refreshes (when enabled).",
+            "The /model picker may show cached results. If models are missing, wait for the "
+            "gateway's catalog refresh, then run `/model --refresh`; this opens the picker. "
+            "On Discord, use `/model` with `name: --refresh`. Restarting alone may still use the disk cache.",
+            "Restart Hermes after installing or updating this plugin to load its commands. "
+            "An open CLI session may keep its old model: select the new model or restart that "
+            "session. Gateway chats using the global default follow config changes automatically; "
+            "session/channel overrides take precedence.",
+        ])
+    selected = state.get("selected") or []
+    pinned = state.get("pinned")
+    watched = {row.get("model") for row in state.get("managed_fallbacks") or []}
+    watched.add(pinned or state.get("managed_default"))
+    rows = {row.get("id"): row for row in selected}
+    rows.update({row.get("id"): row for row in (state.get("catalog") or {}).get("rows") or []})
+    now = _dt.datetime.now(_dt.timezone.utc)
+    for model_id, row in rows.items():
+        if not model_id or model_id not in watched:
+            continue
+        try:
+            expiry = _dt.datetime.fromisoformat(row.get("expires"))
+        except (ValueError, TypeError):
+            continue
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=_dt.timezone.utc)
+        if expiry > now + _dt.timedelta(hours=48):
+            continue
+        timing = "expired" if expiry <= now else "expires"
+        soon = "" if expiry <= now else " (within 48 hours)"
+        action = (
+            "Choose another model or run `hermes freemodels unpin`."
+            if model_id == pinned else "Run `hermes freemodels sync`."
+        )
+        notes.append(f"{model_id} {timing} on {row['expires']}{soon}. {action}")
+    return notes
+
+
 def _record_catalog(state: dict[str, Any], plan: "configsync.CatalogPlan") -> None:
     state["managed_catalog"] = list(plan.managed_ids)
     state["managed_catalog_written"] = state_mod.now_iso()
@@ -540,6 +583,8 @@ def cmd_status(args) -> None:
             )
     else:
         print("managed selection: none yet — run `hermes freemodels sync`")
+    for note in _view_warnings(state):
+        print(f"warning: {note}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -738,6 +783,8 @@ def cmd_list(args) -> None:
     if result.used_fallback_ranking:
         print("note: collection page unavailable — ranked by creation date\n")
     print(render.render_snapshots(_ordered_snapshots(result, state.get("pinned"))))
+    for note in _view_warnings(state):
+        print(f"warning: {note}", file=sys.stderr)
     if not honored:
         print(f"\nwarning: {warning}", file=sys.stderr)
 
@@ -870,7 +917,10 @@ def slash_freemodels(raw_args: str) -> str:
         return _fence(json.dumps(snapshot, indent=2))
 
     if not rows:
-        return "**Free OpenRouter Models**\nNo data yet — run `hermes freemodels sync`."
+        return "\n".join([
+            "**Free OpenRouter Models**\nNo data yet — run `hermes freemodels sync`.",
+            *(f"⚠️ {note}" for note in _view_warnings(state)),
+        ])
 
     if verb != "full":
         rows = [r for r in rows if r.get("in_catalog")]
@@ -887,6 +937,7 @@ def slash_freemodels(raw_args: str) -> str:
     ]
 
     notes: list[str] = []
+    notes.extend(f"⚠️ {note}" for note in _view_warnings(state))
     if mode.name == "loose":
         notes.append("⚠️ Mode `loose` — models that train on your prompts can be selected.")
     if pinned:
