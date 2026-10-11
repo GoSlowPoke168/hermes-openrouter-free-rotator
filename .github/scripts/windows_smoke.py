@@ -84,6 +84,16 @@ def integration_probe():
     owned = [job for job in jobs if job.get("name") == "freemodels-sync"]
     assert len(owned) == 1, jobs
     job_id = owned[0]["id"]
+    state["last_sync"] = None
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    hermes("cron", "run", job_id, timeout=300)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["last_sync"], "Scheduled script did not launch sync"
+    data = json.loads(jobs_path.read_text(encoding="utf-8-sig"))
+    jobs = data["jobs"] if isinstance(data, dict) else data
+    job = next(job for job in jobs if job["id"] == job_id)
+    assert job.get("last_status") == "ok", job
+    previous_run = job["last_run_at"]
     # A successful sync makes natural minute checks quiet, avoiding repeated public requests.
     state["last_sync"] = dt.datetime.now(dt.timezone.utc).isoformat()
     state_path.write_text(json.dumps(state), encoding="utf-8")
@@ -100,7 +110,7 @@ def integration_probe():
                 data = json.loads(jobs_path.read_text(encoding="utf-8-sig"))
                 jobs = data["jobs"] if isinstance(data, dict) else data
                 job = next(job for job in jobs if job["id"] == job_id)
-                if job.get("last_run_at"):
+                if job.get("last_run_at") and job["last_run_at"] != previous_run:
                     assert job.get("last_status") == "ok", job
                     break
                 time.sleep(2)
@@ -122,7 +132,7 @@ def integration_probe():
         "passed": True, "platform": sys.platform, "python": sys.version,
         "plugin_sha": os.environ["GITHUB_SHA"], "hermes_version": "0.21.6",
         "native_lock": True, "live_sync": True, "idempotent_install": True,
-        "natural_gateway_run": True, "quiet_check": True,
+        "scheduled_sync_launch": True, "natural_gateway_run": True, "quiet_check": True,
     }, indent=2), encoding="utf-8")
     print("PASS: Windows installation, live commands, and natural gateway scheduling")
 
