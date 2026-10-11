@@ -61,9 +61,9 @@ Hermes session (or gateway)** to pick up the `freemodels` and `/freemodels`
 commands — they register at plugin load. Then:
 
 ```bash
-hermes freemodels sync                  # apply the best selection now
-hermes freemodels install-cron --apply  # daily at 00:01 UTC through Hermes
-hermes cron status                     # check gateway/ticker health
+hermes freemodels sync                   # apply the best selection now
+hermes freemodels install-cron --apply   # daily at 00:01 UTC through Hermes
+hermes cron status                       # check gateway/ticker health
 ```
 
 Daily sync uses Hermes cron without an agent or LLM. **Keep the gateway running**
@@ -87,7 +87,7 @@ hermes freemodels pin                   # pin the current config.yaml default
 hermes freemodels unpin                 # resume automatic rotation
 hermes freemodels mode [name]           # show/set which privacy tiers may be picked
 hermes freemodels remove-catalog        # drop the free models from /model
-hermes freemodels install-cron --apply  # Hermes scheduling (00:01 UTC; --time HH:MM)
+hermes freemodels install-cron --apply   # Hermes scheduling (00:01 UTC; --time HH:MM)
 hermes freemodels install-cron --system --apply  # opt into system crontab
 ```
 
