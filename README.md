@@ -112,26 +112,18 @@ Hermes's curated ones) and points `model_catalog.providers.openrouter.url` at it
 ```
 
 > [!IMPORTANT]
-> **When to refresh models vs. restart Hermes**
+> **Automatic rotation needs no gateway restart or picker refresh.** With daily
+> scheduling enabled and the gateway running, chats using the global default
+> follow the updated config. Explicit chat model selections and existing CLI
+> sessions may keep their current model.
 >
-> - **Refresh models** if `/model` shows old or missing models after sync.
->   Let the gateway refresh its catalog (normally every 20 minutes when enabled),
->   then run `/model --refresh`. This opens the picker; select OpenRouter and
->   choose a model. On Discord, enter `--refresh` in `/model`'s **name** field.
-> - **Restart Hermes** after installing or updating the plugin to load its code
->   and commands. Run `hermes gateway restart` for the gateway, or close and
->   reopen your CLI session. Discord's command menu may take a few minutes to sync.
+> - **Browsing stale picker results?** Let the gateway refresh its catalog, then
+>   use `/model --refresh` (Discord: `/model` → **name** = `--refresh`). It opens
+>   the picker; restarting alone may still use old cache.
+> - **Installed or updated the plugin?** Restart your session/gateway to load it.
 >
-> **Daily rotation needs no gateway restart:** scheduled sync updates the config,
-> and gateway chats using the global default follow it automatically. An existing
-> CLI session may need a new model selection or restart; session/channel overrides
-> take precedence.
->
-> Restarting alone may still use old disk cache. Refreshing the picker does not
-> run the plugin's sync; use `hermes freemodels sync` to fetch and apply models now.
->
-> `/freemodels`, `list`, and `status` show these reminders and warn about managed
-> models expiring within **48 hours**, using saved expiry dates.
+> `/freemodels`, `list`, and `status` warn about managed models expiring within
+> **48 hours**, using saved expiry dates.
 
 For the labelled view use `/freemodels` in a session, or `hermes freemodels list`:
 
