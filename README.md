@@ -51,9 +51,10 @@ hermes freemodels install-cron --apply  # enable daily sync
 hermes cron status                     # check scheduler health
 ```
 
-Scheduled syncs need script-only cron support and a running gateway. Use
-`hermes gateway install` for auto-start or `hermes gateway run` in the foreground.
-`install-cron --time HH:MM --apply` changes the UTC target; omit `--apply` to preview.
+**Keep the gateway running for daily updates:** use `hermes gateway install`
+for auto-start or `hermes gateway run` in the foreground. Scheduling requires
+Hermes's script-only cron support. Use `install-cron --time HH:MM --apply` to
+change the UTC time, or omit `--apply` to preview.
 
 For a local checkout, use `./install.sh` (copy) or `./install.sh --symlink` (development).
 These scripts require Bash; the plugin-manager route also works in Windows PowerShell.
@@ -105,19 +106,23 @@ If popularity data is unavailable, ranking falls back to newest-first. Fewer
 qualifying models means fewer managed fallbacks; none means rotation is refused.
 A pin overrides the mode for the default, while fallbacks still follow it.
 
-## Automatic updates, refresh, and restart
+## When to refresh or restart
 
-| Situation | What happens / what to do |
-|-----------|--------------------------|
-| New free models | Scheduled sync fetches them and updates config/catalog automatically. Run `hermes freemodels sync` for an immediate update. |
-| Picker shows old models | Keep the gateway running for its periodic catalog refresh (normally 20 minutes when enabled), then use `/model --refresh`. Restarting alone may still use the disk cache. |
-| Running `/model --refresh` | Opens the picker after requesting a cache refresh. Select OpenRouter, then a model. On Discord: `/model` → **name** = `--refresh`. |
-| Default rotated | Gateway chats using the global default follow config changes. An existing CLI session may need a new model selection or restart; session/channel overrides take precedence. |
-| Plugin installed or updated | Restart the session/gateway to load its code and commands. Discord menu synchronization may take several minutes; let it finish. |
+- **Daily updates are automatic** once scheduling is enabled and the gateway is
+  running. To update now, run `hermes freemodels sync`.
+- **Models missing from `/model`?** Let the gateway refresh its catalog cache
+  (normally every 20 minutes when enabled), then run `/model --refresh`.
+  It opens the picker: select OpenRouter and choose a model. On Discord, enter
+  `--refresh` in `/model`'s **name** field. Restarting alone may still use old cache.
+- **Installed or updated the plugin?** Restart the Hermes session/gateway to
+  load its commands. Give Discord a few minutes to update its menu.
 
-Expiry warnings use saved dates; `/freemodels` and `status` do not fetch fresh data.
-The plugin does not update itself. For Hermes-managed Git installs, use
-`hermes plugins update hermes-openrouter-free-rotator`.
+Gateway chats using the global default follow model rotation automatically.
+An existing CLI session may need a new model selection or restart; session/channel
+overrides still take precedence. Expiry warnings use saved dates.
+
+To update the plugin itself, use
+`hermes plugins update hermes-openrouter-free-rotator` for a Hermes-managed Git install.
 
 ## Permissions and storage
 
