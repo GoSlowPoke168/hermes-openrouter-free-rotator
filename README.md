@@ -18,6 +18,16 @@ tomorrow is replaced *before* it goes dark. You can also
 [pick a model yourself](#choosing-a-model-yourself) or
 [change which privacy tiers qualify](#selection-modes).
 
+## Platform support
+
+| Platform | Notes |
+|----------|-------|
+| ![Linux](https://img.shields.io/badge/Linux-supported-brightgreen?logo=linux&logoColor=white) | Supported and tested. |
+| ![Windows](https://img.shields.io/badge/Windows-experimental-yellow) | Potential support, but not tested on Windows. |
+
+If you encounter any issues, please
+[open a GitHub issue](https://github.com/GoSlowPoke168/hermes-openrouter-free-rotator/issues).
+
 ## Install
 
 > [!IMPORTANT]
@@ -46,8 +56,40 @@ commands — they register at plugin load. Then:
 
 ```bash
 hermes freemodels sync                  # apply the best selection now
-hermes freemodels install-cron --apply  # and keep it fresh daily
+hermes freemodels install-cron --apply  # and keep it fresh daily through Hermes
+hermes cron status                    # check that the gateway/ticker is running
 ```
+
+## Daily scheduling
+
+`install-cron --apply` writes `scripts/freemodels_sync.py` under your Hermes home
+and creates or updates one profile-specific `freemodels-sync` job. It uses no
+agent or LLM. The default daily target is **00:01 UTC**, including across
+daylight-saving changes; `--time HH:MM` changes that UTC target.
+
+Hermes checks once a minute with a small Python script. Satisfied checks exit
+silently without starting the CLI or making network requests. Only overdue checks
+run sync, and a successful manual sync also satisfies the latest daily deadline.
+After downtime, one check catches up; failed syncs retry on later checks. Runs
+start on the next available gateway tick, so timing is approximate to the minute.
+Hermes may retain execution history even for quiet checks.
+
+The gateway must stay running. Check `hermes cron status`, then use
+`hermes gateway install` for auto-start or `hermes gateway run` in the foreground.
+On Windows, current Hermes can install gateway auto-start through Task Scheduler
+or a Startup-folder fallback. Older versions may require a foreground gateway;
+update Hermes if script-only jobs (`--no-agent`) are unavailable. The plugin's
+lock works on both Windows and POSIX.
+
+Installing the Hermes job removes this home's active legacy crontab entries
+after successful installation, preserving other profiles' entries. If migration
+fails, the installer warns so you can remove the old entry manually.
+
+On Linux, `install-cron --system --apply` retains the original system-crontab
+behavior. Its UTC-to-local conversion occurs at installation, so rerun it after
+DST changes. When switching back to system cron, remove the Hermes job first
+with `hermes cron remove freemodels-sync` to avoid scheduling both. Preview
+either scheduler by omitting `--apply`.
 
 ## Commands
 
@@ -62,7 +104,8 @@ hermes freemodels pin                   # pin whatever you already picked in /mo
 hermes freemodels unpin                 # resume automatic rotation
 hermes freemodels mode [name]           # show/set which privacy tiers may be picked
 hermes freemodels remove-catalog        # drop the free models from /model
-hermes freemodels install-cron --apply  # run daily (default 00:01 UTC; --time HH:MM)
+hermes freemodels install-cron --apply  # Hermes scheduling (00:01 UTC; --time HH:MM)
+hermes freemodels install-cron --system --apply  # opt into system crontab
 ```
 
 Inside a Hermes session, `/freemodels` prints the same table (`/freemodels full`
@@ -190,7 +233,7 @@ decides. If the collection page can't be read, ranking falls back to newest-firs
 
 ## Files
 
-Everything lives under `~/.hermes/freemodels/`:
+State and logs live under `~/.hermes/freemodels/` (or your profile's Hermes home):
 
 | File | Purpose |
 |------|---------|
@@ -200,21 +243,42 @@ Everything lives under `~/.hermes/freemodels/`:
 | `cron.log` | Output of scheduled runs |
 | `config.yaml.pre-sync.bak` | Backup taken before every config write |
 
+The generated scheduler script lives at `$HERMES_HOME/scripts/freemodels_sync.py`.
+Hermes owns its job database and execution history under `$HERMES_HOME/cron/`.
+
 ## Uninstall
 
 ```bash
 ./uninstall.sh           # remove the plugin, keep state
-./uninstall.sh --purge   # also remove the state dir and crontab entry
+./uninstall.sh --purge   # also remove state, owned schedules and generated script
 ```
 
 Both remove the free models from `/model` first. Your `model.default` and
 fallback chain are left as-is.
 
+Purge requires Python 3 on PATH and Hermes when removing an installed job. It
+also works from this checkout after a previous standard uninstall or plugin disable.
+
 ## Permissions
 
 **This plugin requests no privileged capabilities.** It registers a CLI command
-and a slash command, reads OpenRouter's public API, and writes `config.yaml` and
-its own state directory - all unprivileged.
+and a slash command through Hermes's public registration APIs.
+
+It makes unauthenticated HTTPS requests to `openrouter.ai` for models, endpoint
+availability, collection rankings, and privacy policies. No prompts or conversation
+data are sent. Hermes reports authentication status for a picker warning; the
+plugin does not read credential files, store keys, or refresh tokens.
+
+It reads and updates the current profile's `config.yaml`, keeps its ownership
+ledger and logs under `freemodels/`, and invalidates Hermes's provider-model cache.
+Scheduling writes `scripts/freemodels_sync.py`, reads `cron/jobs.json`, and invokes
+the Hermes cron CLI. The existing gateway runs the job; the plugin does not start
+a background service. Migration and `--system` invoke `crontab`, changing only
+this home's sync entries. Install/uninstall scripts use Bash and change plugin
+files and enablement; standard uninstall removes the managed picker entries.
+
+There is no telemetry or self-updater. Updates should use `hermes plugins update`
+once listed in the catalog.
 
 ```bash
 hermes plugins capabilities hermes-openrouter-free-rotator

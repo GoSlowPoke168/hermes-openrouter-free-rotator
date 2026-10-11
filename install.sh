@@ -13,6 +13,12 @@ set -euo pipefail
 PLUGIN_NAME="hermes-openrouter-free-rotator"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+HERMES_HOME="${HERMES_HOME%/}"
+profile_name="default"
+if [ "$(basename "$(dirname "$HERMES_HOME")")" = "profiles" ]; then
+  profile_name="$(basename "$HERMES_HOME")"
+fi
+hermes_cmd=(hermes --profile "$profile_name")
 PLUGINS_DIR="$HERMES_HOME/plugins"
 TARGET="$PLUGINS_DIR/$PLUGIN_NAME"
 STATE_DIR="$HERMES_HOME/freemodels"
@@ -28,8 +34,8 @@ for arg in "$@"; do
   esac
 done
 
-FILES=(plugin.yaml __init__.py openrouter.py selection.py state.py configsync.py
-       croninstall.py cli.py render.py README.md after-install.md uninstall.sh)
+FILES=(plugin.yaml LICENSE install.sh __init__.py openrouter.py selection.py state.py configsync.py
+       croninstall.py scheduled_sync.py cli.py render.py README.md after-install.md uninstall.sh)
 
 mkdir -p "$PLUGINS_DIR" "$STATE_DIR"
 
@@ -64,10 +70,10 @@ else
 fi
 
 if command -v hermes >/dev/null 2>&1; then
-  if hermes plugins enable --help 2>/dev/null | grep -q -- '--no-allow-tool-override'; then
-    enable_cmd=(hermes plugins enable "$PLUGIN_NAME" --no-allow-tool-override)
+  if "${hermes_cmd[@]}" plugins enable --help 2>/dev/null | grep -q -- '--no-allow-tool-override'; then
+    enable_cmd=("${hermes_cmd[@]}" plugins enable "$PLUGIN_NAME" --no-allow-tool-override)
   else
-    enable_cmd=(hermes plugins enable "$PLUGIN_NAME")
+    enable_cmd=("${hermes_cmd[@]}" plugins enable "$PLUGIN_NAME")
   fi
   "${enable_cmd[@]}" || \
     echo "warning: could not enable plugin — run: hermes plugins enable $PLUGIN_NAME" >&2
@@ -82,5 +88,6 @@ Done. Next steps:
   hermes freemodels list                # see ranked candidates + privacy tiers
   hermes freemodels sync --dry-run      # preview the config change
   hermes freemodels sync                # apply it
-  hermes freemodels install-cron --apply  # run daily, automatically
+  hermes freemodels install-cron --apply  # daily at 00:01 UTC through Hermes
+  hermes cron status                    # verify gateway/ticker health
 EOF

@@ -128,44 +128,19 @@ def _ordered_snapshots(
 
 
 def _catalog_will_be_honored() -> tuple[bool, str]:
-    """Mirror Hermes's credential gate for the picker row we extend.
-
-    `providers.<slug>.models` is merged in exactly one place — section 1 of
-    ``list_authenticated_providers`` — and only when that provider looks
-    authenticated: an API-key env var, or a credential pool with at least one
-    key not exhausted. If neither holds, a *different* code path emits the
-    OpenRouter row and our list is dropped with no error anywhere.
-
-    This is a heuristic mirror of host-private logic, so it is phrased as
-    "may" and must never gate the write: wrongly withholding the catalog
-    would be worse than the silent-ignore it warns about.
-    """
+    """Use host-reported authentication as an advisory picker check."""
     try:
-        if os.environ.get("OPENROUTER_API_KEY"):
+        from agent.secret_scope import get_secret
+        from hermes_cli.auth import get_auth_status
+
+        if get_secret("OPENROUTER_API_KEY") or get_auth_status("openrouter").get("logged_in"):
             return True, ""
     except Exception:
-        pass
-    try:
-        from agent.credential_pool import load_pool
-
-        pool = load_pool(configsync.CATALOG_PROVIDER)
-        if pool.has_credentials():
-            if pool.has_available():
-                return True, ""
-            return False, (
-                "every pooled OpenRouter key is currently exhausted or in cooldown, "
-                "so Hermes may fall back to its built-in model list and ignore the "
-                "free models until one recovers."
-            )
-    except Exception:
-        # Can't tell (older host, import failure) — assume fine rather than
-        # nag on every run.
+        # Unknown host status must not gate catalog writes or produce misleading warnings.
         return True, ""
     return False, (
-        "Hermes only merges this list into /model when it sees an OPENROUTER_API_KEY "
-        "env var or a usable credential-pool entry, and neither was found — /model may "
-        "show the built-in OpenRouter list instead. Fix: export OPENROUTER_API_KEY, or "
-        "run `hermes auth add openrouter`."
+        "Hermes reports no OpenRouter credentials — /model may show its built-in "
+        "list instead of the free models. Run `hermes auth add openrouter`."
     )
 
 
@@ -319,12 +294,21 @@ def _warn_stale_cron() -> None:
 
 def _cron_missing() -> bool:
     try:
-        return croninstall.cron_line_missing()
+        return croninstall.schedule_missing()
     except Exception:
         return False                # a health check must never break a command
 
 
 def cmd_sync(args) -> None:
+    scheduled_time = getattr(args, "scheduled_time", None)
+    if scheduled_time:
+        try:
+            due = croninstall.scheduled_sync_due(state_mod.load_state().get("last_sync"), scheduled_time)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if not due:
+            return
     _warn_stale_cron()
     log = state_mod.get_logger()
     with state_mod.sync_lock() as acquired:
@@ -333,7 +317,10 @@ def cmd_sync(args) -> None:
             return
         # Load inside the lock: `pin` writes state too, and reading first would
         # let this run's save_state clobber a pin set while we were fetching.
-        _sync(args, state_mod.load_state(), log)
+        current = state_mod.load_state()
+        if scheduled_time and not croninstall.scheduled_sync_due(current.get("last_sync"), scheduled_time):
+            return
+        _sync(args, current, log)
 
 
 def _sync(args, state: dict[str, Any], log) -> None:
@@ -519,9 +506,15 @@ def cmd_status(args) -> None:
     print(f"last change:      {state.get('last_change') or 'never'}")
     if info["cron_missing"]:
         print(
-            "daily cron:       NOT INSTALLED — nothing keeps your models fresh;"
+            "daily schedule:   NOT INSTALLED — nothing keeps your models fresh;"
             " run `hermes freemodels install-cron --apply`"
         )
+    else:
+        try:
+            if not croninstall.hermes_job_missing():
+                print("daily schedule:   Hermes job installed; check `hermes cron status` for gateway/ticker health")
+        except (OSError, ValueError):
+            print("daily schedule:   could not inspect Hermes jobs; check `hermes cron status`")
     if managed_catalog:
         written = state.get("managed_catalog_written") or "unknown"
         stale = " (stale)" if _is_stale(state.get("last_sync")) else ""
@@ -953,12 +946,30 @@ def slash_freemodels(raw_args: str) -> str:
 
 def cmd_install_cron(args) -> None:
     try:
-        line = croninstall.build_cron_line(args.time)
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        if getattr(args, "system", False):
+            line = croninstall.build_cron_line(args.time)
+            if not args.apply:
+                print("add this line to your crontab (crontab -e), or rerun with --system --apply:")
+                print(f"  {line}")
+                return
+            print(croninstall.install_cron_line(line))
+            return
+        croninstall.parse_utc_time(args.time)
+        if not args.apply:
+            script = state_mod.hermes_home() / "scripts" / croninstall.SCRIPT_NAME
+            print(f"Would write {script} and create/update Hermes job {croninstall.JOB_NAME!r}.")
+            print(f"Daily sync target: {args.time} UTC, year-round; lightweight checks every minute, no agent.")
+            print("Would remove this home's legacy crontab entry after successful installation.")
+            print("Requires a running gateway; rerun with --apply to install, or --system for crontab.")
+            return
+        with state_mod.sync_lock() as acquired:
+            if not acquired:
+                print("another freemodels command is running — retry installation later", file=sys.stderr)
+                sys.exit(1)
+            print(croninstall.install_hermes_job(args.time))
+    except (OSError, ValueError, RuntimeError, croninstall.subprocess.SubprocessError) as exc:
+        detail = getattr(exc, "stderr", None) or str(exc)
+        if isinstance(exc, FileNotFoundError) and getattr(args, "system", False):
+            detail += "; crontab is required for --system; use the default Hermes scheduler instead"
+        print(f"error: {detail}", file=sys.stderr)
         sys.exit(1)
-    if not args.apply:
-        print("add this line to your crontab (crontab -e), or rerun with --apply:")
-        print(f"  {line}")
-        return
-    print(croninstall.install_cron_line(line))
