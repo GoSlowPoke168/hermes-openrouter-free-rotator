@@ -1,5 +1,19 @@
 name: hermes-openrouter-free-rotator
-version: 1.0.1
+version: "1.1.0"
 description: "Automatically loads the best free OpenRouter models into Hermes Agent. Ranks every :free model daily by privacy (optional) and rotates your default and fallback models before they expire so you can set and forget."
 author: Jeremy Hou
 kind: standalone
+requires_hermes: ">=0.21.0"
+license: MIT
+homepage: https://github.com/GoSlowPoke168/hermes-openrouter-free-rotator
+tags: [openrouter, models, automation]
+capabilities: []
+provides_tools: []
+provides_hooks: []
+provides_middleware: []
+python_dependencies:
+  - "requests>=2.0,<3"
+optional_env:
+  - name: OPENROUTER_API_KEY
+    description: "Optional host credential used only to check /model picker availability; public data requests are unauthenticated."
+    secret: true
