@@ -112,20 +112,23 @@ Hermes's curated ones) and points `model_catalog.providers.openrouter.url` at it
 ```
 
 > [!IMPORTANT]
-> **If `/model` shows old models, refresh the picker.** Keep the gateway running
-> for its catalog refresh (normally every 20 minutes when enabled), then run:
+> **When to refresh models vs. restart Hermes**
 >
-> ```
-> /model --refresh        # opens the picker; select OpenRouter, then a model
-> ```
+> - **Refresh models** if `/model` shows old or missing models after sync.
+>   Let the gateway refresh its catalog (normally every 20 minutes when enabled),
+>   then run `/model --refresh`. This opens the picker; select OpenRouter and
+>   choose a model. On Discord, enter `--refresh` in `/model`'s **name** field.
+> - **Restart Hermes** after installing or updating the plugin to load its code
+>   and commands. Run `hermes gateway restart` for the gateway, or close and
+>   reopen your CLI session. Discord's command menu may take a few minutes to sync.
 >
-> On Discord, enter `--refresh` in `/model`'s **name** field. Restarting alone may
-> still use old disk cache. **Restart Hermes after installing/updating the plugin**
-> to load its commands; ordinary model rotation needs no gateway restart.
+> **Daily rotation needs no gateway restart:** scheduled sync updates the config,
+> and gateway chats using the global default follow it automatically. An existing
+> CLI session may need a new model selection or restart; session/channel overrides
+> take precedence.
 >
-> Gateway chats using the global default follow config changes automatically.
-> An existing CLI session may need a new model selection or restart;
-> session/channel overrides take precedence.
+> Restarting alone may still use old disk cache. Refreshing the picker does not
+> run the plugin's sync; use `hermes freemodels sync` to fetch and apply models now.
 >
 > `/freemodels`, `list`, and `status` show these reminders and warn about managed
 > models expiring within **48 hours**, using saved expiry dates.
