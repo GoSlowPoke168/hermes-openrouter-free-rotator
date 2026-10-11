@@ -48,6 +48,10 @@ def integration_probe():
     assert sys.platform == "win32"
     home = Path(os.environ["HERMES_HOME"])
     home.mkdir(parents=True, exist_ok=True)
+    (home / "config.yaml").write_text(json.dumps({
+        "model": {"provider": "openrouter", "default": "openrouter/auto"},
+        "timezone": "America/New_York",
+    }), encoding="utf-8")
     plugin = "hermes-openrouter-free-rotator"
 
     def hermes(*args, timeout=240):
@@ -55,7 +59,7 @@ def integration_probe():
             ["hermes", "--profile", "default", *args], cwd=home,
             capture_output=True, text=True, timeout=timeout,
         )
-        print(result.stdout)
+        print(result.stdout[-4000:])
         print(result.stderr)
         assert result.returncode == 0, (args, result.returncode)
         return result.stdout
