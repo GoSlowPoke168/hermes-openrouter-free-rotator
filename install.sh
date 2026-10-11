@@ -85,9 +85,9 @@ fi
 cat <<EOF
 
 Done. Next steps:
-  hermes freemodels list                # see ranked candidates + privacy tiers
-  hermes freemodels sync --dry-run      # preview the config change
-  hermes freemodels sync                # apply it
+  hermes freemodels list                  # see ranked candidates + privacy tiers
+  hermes freemodels sync --dry-run        # preview the config change
+  hermes freemodels sync                  # apply it
   hermes freemodels install-cron --apply  # daily at 00:01 UTC through Hermes
-  hermes cron status                    # verify gateway/ticker health
+  hermes cron status                      # verify gateway/ticker health
 EOF
