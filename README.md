@@ -37,6 +37,13 @@ If you encounter any issues, please
 > at OpenRouter, it won't switch providers for you. `fallback_providers` doesn't
 > need to exist beforehand; it's created if missing.
 
+### Installing with Hermes Plugin Manager
+```bash
+hermes plugins install GoSlowPoke168/hermes-openrouter-free-rotator
+hermes plugins enable hermes-openrouter-free-rotator
+```
+
+### Installing Manually
 ```bash
 # Bash setup — clone anywhere, then install into ~/.hermes/plugins/
 git clone https://github.com/GoSlowPoke168/hermes-openrouter-free-rotator
@@ -44,10 +51,6 @@ cd hermes-openrouter-free-rotator && ./install.sh
 
 # Dev mode — symlink your checkout instead of copying
 ./install.sh --symlink
-
-# Via the Hermes plugin manager
-hermes plugins install GoSlowPoke168/hermes-openrouter-free-rotator
-hermes plugins enable hermes-openrouter-free-rotator
 ```
 
 Requires **Hermes >=0.21.0**. The Bash installer enables the plugin; the plugin-manager
