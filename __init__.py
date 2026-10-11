@@ -16,6 +16,8 @@ from __future__ import annotations
 
 
 def _setup_parser(parser) -> None:
+    import argparse
+
     sub = parser.add_subparsers(dest="fm_cmd", required=True)
 
     p_sync = sub.add_parser(
@@ -33,6 +35,7 @@ def _setup_parser(parser) -> None:
         help="Don't refresh the free-model list shown in Hermes's /model picker",
     )
     p_sync.add_argument("--json", action="store_true", help="Machine-readable output")
+    p_sync.add_argument("--scheduled-time", metavar="HH:MM", help=argparse.SUPPRESS)
 
     p_status = sub.add_parser("status", help="Show current selection and last sync result")
     p_status.add_argument("--json", action="store_true", help="Machine-readable output")
@@ -81,18 +84,19 @@ def _setup_parser(parser) -> None:
     )
 
     p_cron = sub.add_parser(
-        "install-cron", help="Print (or install with --apply) the daily crontab entry"
+        "install-cron", help="Preview or install daily scheduling through Hermes"
     )
     p_cron.add_argument(
         "--time",
         default="00:01",
         metavar="HH:MM",
         help="Daily run time in UTC (default 00:01 — shortly after OpenRouter's "
-        "free-tier quota resets at 00:00 UTC); converted to local time when installed",
+        "free-tier quota resets at 00:00 UTC)",
     )
     p_cron.add_argument(
-        "--apply", action="store_true", help="Add the entry to your crontab (idempotent)"
+        "--apply", action="store_true", help="Create/update the schedule (idempotent)"
     )
+    p_cron.add_argument("--system", action="store_true", help="Use system crontab instead of Hermes scheduling")
 
 
 def _dispatch(args) -> None:

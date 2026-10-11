@@ -115,10 +115,29 @@ def sync_lock():
     sync already holds it (caller should back off rather than block — the
     other run is doing the same work).
     """
-    import fcntl
+    try:
+        import fcntl
+    except ImportError:
+        fcntl = None
 
     path = state_dir() / "sync.lock"
     with open(path, "w") as fh:
+        if fcntl is None:
+            import msvcrt
+
+            # Windows can lock past EOF; writing here could hit another run's lock.
+            fh.seek(0)
+            try:
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError:
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+            return
         try:
             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
